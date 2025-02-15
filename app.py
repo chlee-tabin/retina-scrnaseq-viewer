@@ -341,6 +341,14 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
                 title=f'Single-cell visualization - {embedding}'
             )
             
+            # Add this to maintain 1:1 aspect ratio
+            fig.update_layout(
+                yaxis=dict(
+                    scaleanchor="x",
+                    scaleratio=1,
+                )
+            )
+            
             # Update selection styling
             if selection_data and selection_data['indices']:
                 selected_indices = selection_data['indices']
@@ -354,7 +362,6 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
             values = adata.obs[color_by].values if color_by else None
             H, xedges, yedges = create_metacells(x, y, values)
             
-            # Create centered x and y coordinates for the heatmap
             x_centers = (xedges[:-1] + xedges[1:]) / 2
             y_centers = (yedges[:-1] + yedges[1:]) / 2
             
@@ -364,10 +371,10 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
                 y=y_centers,
                 labels={'x': f'{embedding}_1', 'y': f'{embedding}_2'},
                 title=f'Metacell visualization - {embedding}',
-                aspect='equal'
+                aspect='equal'  # This already maintains 1:1 ratio for imshow
             )
         
-        # Parse URL to get view state and apply it to the figure
+        # Parse URL to get view state and apply it
         if url_search:
             params = parse_qs(url_search.lstrip('?'))
             try:
