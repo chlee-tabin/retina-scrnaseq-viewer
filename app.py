@@ -170,15 +170,19 @@ def initialize_dataset_dropdown(pathname):
 # Callback to display dataset information
 @callback(
     Output('dataset-info', 'children'),
-    Input('dataset-select', 'value')
+    [Input('dataset-select', 'value'),
+     Input('data-store', 'data')]  # Add data-store as an input
 )
-def update_dataset_info(dataset_id):
+def update_dataset_info(dataset_id, data_store):
     if not dataset_id:
         return ""
     
     try:
         config = load_dataset_config()
         dataset = config['datasets'][dataset_id]
+        
+        # Get number of cells from data_store if available
+        n_cells = f"{data_store['n_cells']:,}" if data_store and 'n_cells' in data_store else 'N/A'
         
         return dbc.Card([
             dbc.CardBody([
@@ -190,7 +194,7 @@ def update_dataset_info(dataset_id):
                 ], className='card-text'),
                 html.P([
                     html.Strong("Number of Cells: "),
-                    dataset.get('n_cells', 'N/A')
+                    n_cells
                 ], className='card-text')
             ])
         ])
@@ -233,9 +237,8 @@ def update_data(dataset_id):
         embedding_options = [{'label': emb, 'value': emb} for emb in embeddings]
         color_options = [{'label': col, 'value': col} for col in metadata_cols]
         
-        success_message = f"Successfully loaded dataset with {adata.n_obs} cells"
-        logger.info(success_message)
-        return data_store, embedding_options, color_options, success_message
+        logger.info(f"Successfully loaded dataset with {adata.n_obs} cells")
+        return data_store, embedding_options, color_options, ""  # Changed to return empty string
         
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"
@@ -328,26 +331,58 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
         x = adata.obsm[embedding][:, 0]
         y = adata.obsm[embedding][:, 1]
         
+        # Determine if color column should be treated as categorical
+        color_series = adata.obs[color_by] if color_by else None
+        treat_as_categorical = False
+        if color_series is not None:
+            if color_series.dtype.name in ['category', 'object']:
+                treat_as_categorical = True
+            elif np.issubdtype(color_series.dtype, np.integer):
+                n_unique = len(color_series.unique())
+                if n_unique <= 50:
+                    treat_as_categorical = True
+                    color_series = color_series.astype('category')
+        
         if viz_mode == 'cells':
             df = pd.DataFrame({
                 'x': x,
                 'y': y,
-                'color': adata.obs[color_by] if color_by else None
+                'color': color_series if color_by else None
             })
             
             fig = px.scatter(
                 df, x='x', y='y', color='color',
                 labels={'x': f'{embedding}_1', 'y': f'{embedding}_2'},
-                title=f'Single-cell visualization - {embedding}'
+                title=f'Single-cell visualization - {embedding}',
+                color_discrete_sequence=px.colors.qualitative.Set3 if treat_as_categorical else None,
+                color_continuous_scale='viridis' if not treat_as_categorical else None
             )
             
-            # Add this to maintain 1:1 aspect ratio
-            fig.update_layout(
-                yaxis=dict(
-                    scaleanchor="x",
-                    scaleratio=1,
+            # Add custom styling for UMAP plots
+            if 'umap' in embedding.lower():
+                fig.update_layout(
+                    plot_bgcolor='white',
+                    xaxis=dict(
+                        showgrid=False,
+                        showticklabels=False,
+                        scaleanchor="y",
+                        scaleratio=1,
+                    ),
+                    yaxis=dict(
+                        showgrid=False,
+                        showticklabels=False,
+                        scaleanchor="x",
+                        scaleratio=1,
+                    )
                 )
-            )
+            else:
+                # Maintain original 1:1 aspect ratio for non-UMAP plots
+                fig.update_layout(
+                    yaxis=dict(
+                        scaleanchor="x",
+                        scaleratio=1,
+                    )
+                )
             
             # Update selection styling
             if selection_data and selection_data['indices']:
