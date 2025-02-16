@@ -82,5 +82,6 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode, relay_data
             view_state['yrange'] = [relay_data['yaxis.range[0]'], relay_data['yaxis.range[1]']]
         state_dict['view'] = view_state
     
-    share_url = create_share_url(current_url.split('?')[0], state_dict)
+    base_url = current_url.split('?')[0]
+    share_url = create_share_url(base_url, state_dict)
     return {'display': 'block'}, share_url 
