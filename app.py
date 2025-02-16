@@ -91,7 +91,7 @@ app.layout = dbc.Container([
     # Add interval component here
     dcc.Interval(
         id='interval-component',
-        interval=500000,  # Update every 500 seconds
+        interval=5000,  # Update every 5 seconds
         n_intervals=0
     ),
     
