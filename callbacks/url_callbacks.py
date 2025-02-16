@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
      Output('embedding-select', 'value', allow_duplicate=True),
      Output('color-select', 'value', allow_duplicate=True),
      Output('viz-mode', 'value', allow_duplicate=True),
-     Output('gene-select', 'value', allow_duplicate=True)],
+     Output('gene-select', 'value', allow_duplicate=True),
+     Output('custom-x-select', 'value', allow_duplicate=True),
+     Output('custom-y-select', 'value', allow_duplicate=True),
+     Output('custom-embedding-container', 'style', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     [State('dataset-select', 'options'),
@@ -27,22 +30,31 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
     triggered_id = ctx.triggered_id if ctx.triggered_id else 'url.search'
     
     if triggered_id == 'url.pathname':
-        return no_update, no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, no_update
     
     if not search:
-        # Return defaults instead of no_update for viz_mode
-        return no_update, no_update, no_update, 'random', no_update
+        return no_update, no_update, no_update, 'random', no_update, no_update, no_update, {'display': 'none'}
     
     state = parse_url_state(search)
     if not state:
-        return no_update, no_update, no_update, 'random', no_update
+        return no_update, no_update, no_update, 'random', no_update, no_update, no_update, {'display': 'none'}
+    
+    # Get custom embedding values if present
+    custom_x = state.get('custom_x') if state.get('embedding') == 'custom_embedding' else None
+    custom_y = state.get('custom_y') if state.get('embedding') == 'custom_embedding' else None
+    
+    # Show custom embedding container if custom embedding is selected
+    container_style = {'display': 'block'} if state.get('embedding') == 'custom_embedding' else {'display': 'none'}
     
     return (
         state.get('dataset'),
         state.get('embedding'),
         state.get('color'),
-        state.get('mode', 'random'),  # Default to 'random'
-        state.get('gene')
+        state.get('mode', 'random'),
+        state.get('gene'),
+        custom_x,
+        custom_y,
+        container_style
     )
 
 @callback(
@@ -54,16 +66,19 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
      State('color-select', 'value'),
      State('gene-select', 'value'),
      State('viz-mode', 'value'),
+     State('custom-x-select', 'value'),
+     State('custom-y-select', 'value'),
      State('main-plot', 'relayoutData'),
      State('url', 'href')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode, relay_data, current_url):
+def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode, custom_x, custom_y, relay_data, current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
     
+    # Build state dictionary
     state_dict = {
         'dataset': dataset,
         'embedding': embedding,
@@ -71,17 +86,27 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode, relay_data
         'mode': viz_mode
     }
     
+    # Add gene if color_by is gene_expression
     if color_by == 'gene_expression' and gene:
         state_dict['gene'] = gene
     
+    # Add custom embedding parameters if using custom embedding
+    if embedding == 'custom_embedding':
+        state_dict['custom_x'] = custom_x
+        state_dict['custom_y'] = custom_y
+    
+    # Add view state if available
     if relay_data:
         view_state = {}
         if 'xaxis.range[0]' in relay_data and 'xaxis.range[1]' in relay_data:
             view_state['xrange'] = [relay_data['xaxis.range[0]'], relay_data['xaxis.range[1]']]
         if 'yaxis.range[0]' in relay_data and 'yaxis.range[1]' in relay_data:
             view_state['yrange'] = [relay_data['yaxis.range[0]'], relay_data['yaxis.range[1]']]
-        state_dict['view'] = view_state
+        if view_state:
+            state_dict['view'] = view_state
     
+    # Create the share URL using the state dictionary
     base_url = current_url.split('?')[0]
     share_url = create_share_url(base_url, state_dict)
-    return {'display': 'block'}, share_url 
+    
+    return {'display': 'block', 'width': '100%', 'marginTop': '10px'}, share_url 

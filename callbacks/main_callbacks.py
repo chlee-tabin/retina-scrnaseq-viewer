@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
     Output('main-plot', 'figure', allow_duplicate=True),
     [Input('data-store', 'data'),
      Input('embedding-select', 'value'),
+     Input('custom-x-select', 'value'),
+     Input('custom-y-select', 'value'),
      Input('color-select', 'value'),
      Input('gene-select', 'value'),
      Input('viz-mode', 'value'),
@@ -27,27 +29,43 @@ logger = logging.getLogger(__name__)
 )
 @handle_callback_error
 @log_callback_info
-def update_plot(data_store, embedding, color_by, gene, viz_mode, selection_data, url_search):
+def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode, selection_data, url_search):
     logger.debug("update_plot called with parameters:")
     logger.debug(f"data_store: {data_store}")
     logger.debug(f"embedding: {embedding}")
+    logger.debug(f"custom_x: {custom_x}")
+    logger.debug(f"custom_y: {custom_y}")
     logger.debug(f"color_by: {color_by}")
     logger.debug(f"gene: {gene}")
     logger.debug(f"viz_mode: {viz_mode}")
     logger.debug(f"selection_data: {selection_data}")
     logger.debug(f"url_search: {url_search}")
 
-    if data_store is None or embedding is None:
-        logger.warning("Data store or embedding is None")
+    if data_store is None:
+        logger.warning("Data store is None")
         return {}
     
     try:
         adata = load_adata(data_store['filename'])
         logger.debug(f"Loaded adata with {adata.n_obs} cells and {adata.n_vars} genes")
         
-        x = adata.obsm[embedding][:, 0]
-        y = adata.obsm[embedding][:, 1]
-        logger.debug(f"Embedding '{embedding}' extracted: x[:5]={x[:5]}, y[:5]={y[:5]}")
+        # Handle custom embedding
+        if embedding == 'custom_embedding':
+            if not custom_x or not custom_y:
+                logger.warning("Custom embedding x or y not selected")
+                return {}
+            x = adata.obs[custom_x].values
+            y = adata.obs[custom_y].values
+            embedding_name = f'{custom_x} vs {custom_y}'
+        else:
+            if embedding is None:
+                logger.warning("Embedding is None")
+                return {}
+            x = adata.obsm[embedding][:, 0]
+            y = adata.obsm[embedding][:, 1]
+            embedding_name = embedding
+        
+        logger.debug(f"Embedding '{embedding_name}' extracted: x[:5]={x[:5]}, y[:5]={y[:5]}")
         
         # Handle gene expression
         if color_by == 'gene_expression':
@@ -98,7 +116,7 @@ def update_plot(data_store, embedding, color_by, gene, viz_mode, selection_data,
         
         color_label = gene if color_by == 'gene_expression' else color_by
         logger.debug(f"Creating scatter plot with color_by='{color_label}'")
-        fig = create_scatter_plot(df, embedding, color_label, treat_as_categorical)
+        fig = create_scatter_plot(df, embedding_name, color_label, treat_as_categorical)
         
         if selection_data and selection_data.get('indices'):
             logger.debug(f"Updating plot with selection indices: {selection_data['indices']}")
@@ -135,3 +153,45 @@ def update_gene_select(color_value, data_store):
         return {'display': 'block'}, gene_options
     logger.debug("Hiding gene-select container")
     return {'display': 'none'}, [] 
+
+@callback(
+    [Output('custom-x-select', 'options'),
+     Output('custom-y-select', 'options'),
+     Output('custom-x-select', 'value'),
+     Output('custom-y-select', 'value'),
+     Output('custom-embedding-container', 'style')],
+    [Input('data-store', 'data'),
+     Input('embedding-select', 'value'),
+     Input('url', 'search')],
+    prevent_initial_call=True
+)
+@handle_callback_error
+@log_callback_info
+def update_custom_embedding_controls(data_store, embedding, url_search):
+    if not data_store or not data_store.get('metadata_cols'):
+        return [], [], None, None, {'display': 'none'}
+    
+    # Get numeric columns for custom embedding
+    numeric_cols = [
+        col for col, type_ in data_store.get('column_types', {}).items()
+        if type_ == 'numeric'
+    ]
+    
+    options = [{'label': col, 'value': col} for col in numeric_cols]
+    
+    # Set container visibility based on embedding type
+    container_style = {'display': 'block'} if embedding == 'custom_embedding' else {'display': 'none'}
+    
+    # Check if we should initialize from URL state
+    if url_search:
+        state = parse_url_state(url_search)
+        if state and state.get('embedding') == 'custom_embedding':
+            custom_x = state.get('custom_x')
+            custom_y = state.get('custom_y')
+            # Only set values if they exist in the options
+            valid_values = [opt['value'] for opt in options]
+            if custom_x in valid_values and custom_y in valid_values:
+                return options, options, custom_x, custom_y, container_style
+    
+    # Default return if not initializing from URL
+    return options, options, None, None, container_style 

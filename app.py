@@ -208,15 +208,37 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         dataset = config['datasets'][dataset_id]
         adata = load_adata(dataset['file_path'])
         
+        # Determine column types
+        column_types = {}
+        for col in adata.obs.columns:
+            if pd.api.types.is_numeric_dtype(adata.obs[col]):
+                column_types[col] = 'numeric'
+            else:
+                column_types[col] = 'categorical'
+        
+        # Create embedding list including custom embedding option
+        available_embeddings = list(adata.obsm.keys())
+        
         data_store = {
             'filename': dataset['file_path'],
             'n_cells': adata.n_obs,
-            'embeddings': list(adata.obsm.keys()),
+            'embeddings': available_embeddings + ['custom_embedding'],
             'metadata_cols': list(adata.obs.columns),
-            'genes': list(adata.var_names)
+            'genes': list(adata.var_names),
+            'column_types': column_types  # Add column types to data store
         }
         
-        embedding_options = [{'label': emb, 'value': emb} for emb in data_store['embeddings']]
+        # Create embedding options with custom embedding as first option
+        embedding_options = [
+            {'label': 'Custom embedding by meta scores', 'value': 'custom_embedding'}
+        ] + [
+            {'label': emb, 'value': emb} for emb in available_embeddings
+        ]
+        
+        # Check URL state if available
+        state = parse_url_state(url_search) if url_search else None
+        url_color = state.get('color') if state else None
+        url_gene = state.get('gene') if state else None
         
         # Always include Gene Expression option
         color_options = [
@@ -226,11 +248,6 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             {'label': col, 'value': col} 
             for col in data_store['metadata_cols']
         ])
-        
-        # Check URL state if available
-        state = parse_url_state(url_search) if url_search else None
-        url_color = state.get('color') if state else None
-        url_gene = state.get('gene') if state else None
         
         # Determine color and gene values
         valid_color_values = ['gene_expression'] + data_store['metadata_cols']
@@ -419,52 +436,6 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
     except Exception as e:
         logger.error(f"Error updating plot: {str(e)}")
         return {}
-
-# Update the share button callback to only handle generating the shareable URL
-@callback(
-    [Output('share-url', 'style'),
-     Output('share-url', 'value')],
-    Input('share-button', 'n_clicks'),
-    [State('dataset-select', 'value'),
-     State('embedding-select', 'value'),
-     State('color-select', 'value'),
-     State('viz-mode', 'value'),
-     State('main-plot', 'relayoutData'),
-     State('url', 'href')]
-)
-def share_url(n_clicks, dataset, embedding, color_by, viz_mode, relay_data, current_url):
-    if n_clicks is None:
-        return {'display': 'none'}, ''
-    
-    # Parse the base URL (everything before the query string)
-    base_url = current_url.split('?')[0]
-    
-    # Build query parameters
-    params = {}
-    if dataset:
-        params['dataset'] = dataset
-    if embedding:
-        params['embedding'] = embedding
-    if color_by:
-        params['color'] = color_by
-    if viz_mode:
-        params['mode'] = viz_mode
-    
-    # Add view state if available
-    if relay_data:
-        view_state = {}
-        if 'xaxis.range[0]' in relay_data and 'xaxis.range[1]' in relay_data:
-            view_state['xrange'] = [relay_data['xaxis.range[0]'], relay_data['xaxis.range[1]']]
-        if 'yaxis.range[0]' in relay_data and 'yaxis.range[1]' in relay_data:
-            view_state['yrange'] = [relay_data['yaxis.range[0]'], relay_data['yaxis.range[1]']]
-        
-        if view_state:
-            params['view'] = base64.urlsafe_b64encode(json.dumps(view_state).encode()).decode()
-    
-    # Construct the full URL
-    full_url = f"{base_url}?{urlencode(params)}"
-    
-    return {'display': 'block', 'width': '100%', 'marginTop': '10px'}, full_url
 
 if __name__ == '__main__':
     app.run_server(debug=True) 

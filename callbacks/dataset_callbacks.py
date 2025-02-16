@@ -5,6 +5,7 @@ from utils.data_loading import load_dataset_config, validate_datasets, load_adat
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.config import load_config
 import logging
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +48,32 @@ def update_data(dataset_id, current_color, current_gene):
         dataset = config['datasets'][dataset_id]
         adata = load_adata(dataset['file_path'])
         
+        # Determine column types
+        column_types = {}
+        for col in adata.obs.columns:
+            if pd.api.types.is_numeric_dtype(adata.obs[col]):
+                column_types[col] = 'numeric'
+            else:
+                column_types[col] = 'categorical'
+        
+        # Create embedding list including custom embedding option
+        available_embeddings = list(adata.obsm.keys())
+        
         data_store = {
             'filename': dataset['file_path'],
             'n_cells': adata.n_obs,
-            'embeddings': list(adata.obsm.keys()),
+            'embeddings': available_embeddings + ['custom_embedding'],  # Add custom_embedding to the list
             'metadata_cols': list(adata.obs.columns),
-            'genes': list(adata.var_names)
+            'genes': list(adata.var_names),
+            'column_types': column_types
         }
         
-        embedding_options = [{'label': emb, 'value': emb} for emb in data_store['embeddings']]
+        # Create embedding options with custom embedding as first option
+        embedding_options = [
+            {'label': 'Custom embedding by meta scores', 'value': 'custom_embedding'}
+        ] + [
+            {'label': emb, 'value': emb} for emb in available_embeddings
+        ]
         
         color_options = [
             {'label': 'Gene Expression', 'value': 'gene_expression'}

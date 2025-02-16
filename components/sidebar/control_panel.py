@@ -16,6 +16,20 @@ def create_control_panel():
                     placeholder="Select embedding"
                 ),
                 
+                # New container for custom embedding controls
+                html.Div([
+                    html.Label("X-axis:", className="mt-2"),
+                    dcc.Dropdown(
+                        id='custom-x-select',
+                        placeholder="Select X-axis metric"
+                    ),
+                    html.Label("Y-axis:", className="mt-2"),
+                    dcc.Dropdown(
+                        id='custom-y-select',
+                        placeholder="Select Y-axis metric"
+                    )
+                ], id='custom-embedding-container', style={'display': 'none'}),
+                
                 html.Label("Color by:", className="mt-3"),
                 dcc.Dropdown(
                     id='color-select',
