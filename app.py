@@ -14,6 +14,7 @@ import io
 import yaml
 from datetime import datetime
 from pathlib import Path
+import time
 
 # Import layouts
 from layouts.sidebar import create_sidebar
@@ -24,11 +25,13 @@ from callbacks.dataset_callbacks import *
 from callbacks.selection_callbacks import *
 from callbacks.url_callbacks import *
 from callbacks.main_callbacks import *
+from callbacks.status_callbacks import *
 
 # Import utilities
 from utils.data_loading import load_adata, load_dataset_config, validate_datasets
 from utils.config import load_config
 from utils.error_handling import handle_callback_error, log_callback_info
+from components.status_bar import create_status_bar
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -83,6 +86,17 @@ app.layout = dbc.Container([
     dcc.Store(id='selection-store'),
     dcc.Store(id='url-parameters'),
     dcc.Store(id='initial-load-flag', data=True),
+    dcc.Store(id='session-id', data=str(time.time())),
+    
+    # Add interval component here
+    dcc.Interval(
+        id='interval-component',
+        interval=500000,  # Update every 500 seconds
+        n_intervals=0
+    ),
+    
+    # Add status bar at the top
+    create_status_bar(),
     
     dbc.Row([
         # Fixed sidebar
