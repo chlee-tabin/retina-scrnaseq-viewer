@@ -28,6 +28,8 @@ def initialize_dataset_dropdown(pathname):
     [Output('data-store', 'data', allow_duplicate=True),
      Output('embedding-select', 'options', allow_duplicate=True),
      Output('color-select', 'options', allow_duplicate=True),
+     Output('color-select', 'value'),
+     Output('gene-select', 'value'),
      Output('loading-output', 'children', allow_duplicate=True)],
     Input('dataset-select', 'value'),
     prevent_initial_call=True
@@ -36,23 +38,39 @@ def initialize_dataset_dropdown(pathname):
 @log_callback_info
 def update_data(dataset_id):
     if not dataset_id:
-        return None, [], [], ""
+        return None, [], [], None, None, ""
     
-    config = load_dataset_config()
-    dataset = config['datasets'][dataset_id]
-    adata = load_adata(dataset['file_path'])
-    
-    data_store = {
-        'filename': dataset['file_path'],
-        'n_cells': adata.n_obs,
-        'embeddings': list(adata.obsm.keys()),
-        'metadata_cols': list(adata.obs.columns)
-    }
-    
-    embedding_options = [{'label': emb, 'value': emb} for emb in data_store['embeddings']]
-    color_options = [{'label': col, 'value': col} for col in data_store['metadata_cols']]
-    
-    return data_store, embedding_options, color_options, ""
+    try:
+        config = load_dataset_config()
+        dataset = config['datasets'][dataset_id]
+        adata = load_adata(dataset['file_path'])
+        
+        data_store = {
+            'filename': dataset['file_path'],
+            'n_cells': adata.n_obs,
+            'embeddings': list(adata.obsm.keys()),
+            'metadata_cols': list(adata.obs.columns),
+            'genes': list(adata.var_names)
+        }
+        
+        embedding_options = [{'label': emb, 'value': emb} for emb in data_store['embeddings']]
+        
+        # Make sure Gene Expression is the first option
+        color_options = [
+            {'label': 'Gene Expression', 'value': 'gene_expression'}
+        ]
+        # Then add metadata columns
+        color_options.extend([
+            {'label': f"Metadata: {col}", 'value': col} 
+            for col in data_store['metadata_cols']
+        ])
+        
+        return data_store, embedding_options, color_options, None, None, ""
+        
+    except Exception as e:
+        error_message = f"Error loading data: {str(e)}"
+        logger.error(error_message)
+        return None, [], [], None, None, error_message
 
 @callback(
     Output('dataset-info', 'children', allow_duplicate=True),

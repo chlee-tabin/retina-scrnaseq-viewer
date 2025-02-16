@@ -22,6 +22,15 @@ def create_control_panel():
                     placeholder="Select feature"
                 ),
                 
+                # Gene selection input
+                html.Div([
+                    html.Label("Gene:", className="mt-3"),
+                    dcc.Dropdown(
+                        id='gene-select',
+                        placeholder="Type gene name..."
+                    )
+                ], id='gene-select-container', style={'display': 'none'}),
+                
                 html.Label("Visualization Mode:", className="mt-3"),
                 dcc.RadioItems(
                     id='viz-mode',
