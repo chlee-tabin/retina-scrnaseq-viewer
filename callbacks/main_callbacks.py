@@ -10,6 +10,7 @@ from utils.processing import create_metacells, calculate_selection_stats
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import parse_url_state
 import scipy.sparse
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -27,62 +28,82 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def update_plot(data_store, embedding, color_by, gene, viz_mode, selection_data, url_search):
+    logger.debug("update_plot called with parameters:")
+    logger.debug(f"data_store: {data_store}")
+    logger.debug(f"embedding: {embedding}")
+    logger.debug(f"color_by: {color_by}")
+    logger.debug(f"gene: {gene}")
+    logger.debug(f"viz_mode: {viz_mode}")
+    logger.debug(f"selection_data: {selection_data}")
+    logger.debug(f"url_search: {url_search}")
+
     if data_store is None or embedding is None:
+        logger.warning("Data store or embedding is None")
         return {}
     
     try:
         adata = load_adata(data_store['filename'])
+        logger.debug(f"Loaded adata with {adata.n_obs} cells and {adata.n_vars} genes")
         
         x = adata.obsm[embedding][:, 0]
         y = adata.obsm[embedding][:, 1]
+        logger.debug(f"Embedding '{embedding}' extracted: x[:5]={x[:5]}, y[:5]={y[:5]}")
         
         # Handle gene expression
         if color_by == 'gene_expression':
-            if not gene:  # If no gene is selected yet
+            logger.debug("Color by gene_expression selected")
+            if not gene:
+                logger.debug("No gene selected")
                 color_series = None
             else:
-                color_series = adata[:, gene].X.toarray().flatten() if scipy.sparse.issparse(adata.X) else adata[:, gene].X
-            treat_as_categorical = False
+                if scipy.sparse.issparse(adata.X):
+                    color_series = adata[:, gene].X.toarray().flatten()
+                    logger.debug(f"Gene '{gene}' expression data loaded from sparse matrix")
+                else:
+                    color_series = adata[:, gene].X
+                    logger.debug(f"Gene '{gene}' expression data loaded from dense matrix")
+                treat_as_categorical = False
         else:
+            logger.debug(f"Color by '{color_by}' selected")
             color_series = adata.obs[color_by] if color_by else None
+            if color_series is not None:
+                logger.debug(f"Color series dtype: {color_series.dtype}")
             treat_as_categorical = (
                 color_series.dtype.name in ['category', 'object'] or
                 (pd.api.types.is_integer_dtype(color_series) and len(color_series.unique()) <= 50)
             )
+            logger.debug(f"treat_as_categorical: {treat_as_categorical}")
+        
+        logger.debug("Creating DataFrame for plotting")
+        df = pd.DataFrame({
+            'x': x,
+            'y': y,
+            'color': color_series
+        })
+        logger.debug(f"DataFrame head:\n{df.head()}")
         
         if viz_mode == 'cells':
-            df = pd.DataFrame({
-                'x': x,
-                'y': y,
-                'color': color_series
-            })
-            
-            fig = create_scatter_plot(df, embedding, color_by if color_by != 'gene_expression' else gene, 
-                                    treat_as_categorical)
-            
-            if selection_data and selection_data['indices']:
-                fig.update_traces(
-                    selectedpoints=selection_data['indices'],
-                    selected=dict(marker=dict(color='red')),
-                    unselected=dict(marker=dict(opacity=0.3))
-                )
+            color_label = gene if color_by == 'gene_expression' else color_by
+            logger.debug(f"Creating scatter plot with color_by='{color_label}'")
+            fig = create_scatter_plot(df, embedding, color_label, treat_as_categorical)
         else:
-            values = adata.obs[color_by].values if color_by else None
-            H, xedges, yedges = create_metacells(x, y, values)
-            fig = create_metacell_plot(H, xedges, yedges, embedding)
+            logger.debug(f"Visualization mode '{viz_mode}' not handled")
+            fig = create_scatter_plot(df, embedding, color_by, treat_as_categorical)
         
-        # Apply view state from URL
-        view_state = parse_url_state(url_search)
-        if view_state and 'view' in view_state:
-            fig.update_layout(
-                xaxis_range=view_state['view']['xrange'],
-                yaxis_range=view_state['view']['yrange']
+        if selection_data and selection_data.get('indices'):
+            logger.debug(f"Updating plot with selection indices: {selection_data['indices']}")
+            fig.update_traces(
+                selectedpoints=selection_data['indices'],
+                selected=dict(marker=dict(opacity=1)),
+                unselected=dict(marker=dict(opacity=0.1))
             )
         
+        logger.debug("Plot created successfully")
         return fig
     
     except Exception as e:
         logger.error(f"Error updating plot: {str(e)}")
+        logger.error(traceback.format_exc())
         return {} 
 
 @callback(
@@ -94,7 +115,13 @@ def update_plot(data_store, embedding, color_by, gene, viz_mode, selection_data,
 @handle_callback_error
 @log_callback_info
 def update_gene_select(color_value, data_store):
+    logger.debug("update_gene_select called with:")
+    logger.debug(f"color_value: {color_value}")
+    logger.debug(f"data_store: {data_store}")
+
     if color_value == 'gene_expression' and data_store and 'genes' in data_store:
         gene_options = [{'label': gene, 'value': gene} for gene in data_store['genes']]
+        logger.debug(f"Gene options generated: {gene_options[:5]}...")  # Log first 5 for brevity
         return {'display': 'block'}, gene_options
+    logger.debug("Hiding gene-select container")
     return {'display': 'none'}, [] 

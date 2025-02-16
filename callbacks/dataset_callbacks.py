@@ -28,15 +28,17 @@ def initialize_dataset_dropdown(pathname):
     [Output('data-store', 'data', allow_duplicate=True),
      Output('embedding-select', 'options', allow_duplicate=True),
      Output('color-select', 'options', allow_duplicate=True),
-     Output('color-select', 'value'),
-     Output('gene-select', 'value'),
+     Output('color-select', 'value', allow_duplicate=True),
+     Output('gene-select', 'value', allow_duplicate=True),
      Output('loading-output', 'children', allow_duplicate=True)],
-    Input('dataset-select', 'value'),
+    [Input('dataset-select', 'value'),
+     State('color-select', 'value'),
+     State('gene-select', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_data(dataset_id):
+def update_data(dataset_id, current_color, current_gene):
     if not dataset_id:
         return None, [], [], None, None, ""
     
@@ -55,17 +57,19 @@ def update_data(dataset_id):
         
         embedding_options = [{'label': emb, 'value': emb} for emb in data_store['embeddings']]
         
-        # Make sure Gene Expression is the first option
         color_options = [
             {'label': 'Gene Expression', 'value': 'gene_expression'}
         ]
-        # Then add metadata columns
         color_options.extend([
-            {'label': f"Metadata: {col}", 'value': col} 
+            {'label': col, 'value': col} 
             for col in data_store['metadata_cols']
         ])
         
-        return data_store, embedding_options, color_options, None, None, ""
+        valid_color_values = ['gene_expression'] + data_store['metadata_cols']
+        color_value = current_color if current_color in valid_color_values else None
+        gene_value = current_gene if current_gene in data_store['genes'] else None
+        
+        return data_store, embedding_options, color_options, color_value, gene_value, ""
         
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"

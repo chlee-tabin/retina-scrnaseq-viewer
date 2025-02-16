@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
     [Output('dataset-select', 'value', allow_duplicate=True),
      Output('embedding-select', 'value', allow_duplicate=True),
      Output('color-select', 'value', allow_duplicate=True),
-     Output('viz-mode', 'value', allow_duplicate=True)],
+     Output('viz-mode', 'value', allow_duplicate=True),
+     Output('gene-select', 'value', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     [State('dataset-select', 'options'),
@@ -26,20 +27,21 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
     triggered_id = ctx.triggered_id if ctx.triggered_id else 'url.search'
     
     if triggered_id == 'url.pathname':
-        return no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update
     
     if not search:
-        return no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update
     
     state = parse_url_state(search)
     if not state:
-        return no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update, no_update
     
     return (
-        state.get('dataset', no_update),
-        state.get('embedding', no_update),
-        state.get('color', no_update),
-        state.get('mode', no_update)
+        state.get('dataset'),
+        state.get('embedding'),
+        state.get('color'),
+        state.get('mode', 'cells'),
+        state.get('gene')
     )
 
 @callback(
@@ -49,6 +51,7 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
     [State('dataset-select', 'value'),
      State('embedding-select', 'value'),
      State('color-select', 'value'),
+     State('gene-select', 'value'),
      State('viz-mode', 'value'),
      State('main-plot', 'relayoutData'),
      State('url', 'href')],
@@ -56,7 +59,7 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
 )
 @handle_callback_error
 @log_callback_info
-def share_url(n_clicks, dataset, embedding, color_by, viz_mode, relay_data, current_url):
+def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode, relay_data, current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
     
@@ -66,6 +69,9 @@ def share_url(n_clicks, dataset, embedding, color_by, viz_mode, relay_data, curr
         'color': color_by,
         'mode': viz_mode
     }
+    
+    if color_by == 'gene_expression' and gene:
+        state_dict['gene'] = gene
     
     if relay_data:
         view_state = {}

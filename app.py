@@ -33,8 +33,15 @@ from utils.config import load_config
 from utils.error_handling import handle_callback_error, log_callback_info
 from components.status_bar import create_status_bar
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,  # Set to DEBUG to capture all logs
+    format='%(asctime)s %(levelname)s %(name)s %(message)s',
+    handlers=[
+        logging.FileHandler("app_debug.log"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Initialize the Dash app with bootstrap theme
@@ -178,53 +185,77 @@ def update_dataset_info(dataset_id, data_store):
 
 # Simplify the data loading callback to only handle dataset selection
 @callback(
-    [Output('data-store', 'data'),
-     Output('embedding-select', 'options'),
-     Output('color-select', 'options'),
-     Output('loading-output', 'children')],
-    Input('dataset-select', 'value'),
+    [Output('data-store', 'data', allow_duplicate=True),
+     Output('embedding-select', 'options', allow_duplicate=True),
+     Output('color-select', 'options', allow_duplicate=True),
+     Output('color-select', 'value', allow_duplicate=True),
+     Output('gene-select', 'value', allow_duplicate=True),
+     Output('loading-output', 'children', allow_duplicate=True)],
+    [Input('dataset-select', 'value'),
+     Input('url', 'search')],
+    [State('color-select', 'value'),
+     State('gene-select', 'value')],
     prevent_initial_call=True
 )
-def update_data(dataset_id):
+@handle_callback_error
+@log_callback_info
+def update_data(dataset_id, url_search, current_color, current_gene):
     if not dataset_id:
-        return None, [], [], ""
+        return None, [], [], None, None, ""
     
     try:
         config = load_dataset_config()
         dataset = config['datasets'][dataset_id]
-        file_path = dataset['file_path']
-        
-        logger.info(f"Loading dataset: {dataset['title']}")
-        adata = load_adata(file_path)
-        
-        # Common processing
-        embeddings = list(adata.obsm.keys())
-        metadata_cols = list(adata.obs.columns)
+        adata = load_adata(dataset['file_path'])
         
         data_store = {
-            'filename': file_path,
+            'filename': dataset['file_path'],
             'n_cells': adata.n_obs,
-            'embeddings': embeddings,
-            'metadata_cols': metadata_cols
+            'embeddings': list(adata.obsm.keys()),
+            'metadata_cols': list(adata.obs.columns),
+            'genes': list(adata.var_names)
         }
         
-        embedding_options = [{'label': emb, 'value': emb} for emb in embeddings]
-        color_options = [{'label': col, 'value': col} for col in metadata_cols]
+        embedding_options = [{'label': emb, 'value': emb} for emb in data_store['embeddings']]
         
-        logger.info(f"Successfully loaded dataset with {adata.n_obs} cells")
-        return data_store, embedding_options, color_options, ""  # Changed to return empty string
+        # Always include Gene Expression option
+        color_options = [
+            {'label': 'Gene Expression', 'value': 'gene_expression'}
+        ]
+        color_options.extend([
+            {'label': col, 'value': col} 
+            for col in data_store['metadata_cols']
+        ])
+        
+        # Check URL state if available
+        state = parse_url_state(url_search) if url_search else None
+        url_color = state.get('color') if state else None
+        url_gene = state.get('gene') if state else None
+        
+        # Determine color and gene values
+        valid_color_values = ['gene_expression'] + data_store['metadata_cols']
+        color_value = (url_color if url_color in valid_color_values 
+                      else current_color if current_color in valid_color_values 
+                      else None)
+        
+        gene_value = (url_gene if url_gene in data_store['genes']
+                     else current_gene if current_gene in data_store['genes']
+                     else None)
+        
+        return data_store, embedding_options, color_options, color_value, gene_value, ""
         
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"
         logger.error(error_message)
-        return None, [], [], error_message
+        return None, [], [], None, None, error_message
 
 # Update the initialization callback to be more robust
 @callback(
     [Output('dataset-select', 'value', allow_duplicate=True),
      Output('embedding-select', 'value', allow_duplicate=True),
      Output('color-select', 'value', allow_duplicate=True),
-     Output('viz-mode', 'value', allow_duplicate=True)],
+     Output('viz-mode', 'value', allow_duplicate=True),
+     Output('gene-select', 'value', allow_duplicate=True)],
     [Input('url', 'search')],
     [State('dataset-select', 'options'),
      State('dataset-select', 'value')],
@@ -232,38 +263,23 @@ def update_data(dataset_id):
 )
 def initialize_from_url(search, dataset_options, current_dataset):
     if not search:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
     
     try:
-        params = parse_qs(search.lstrip('?'))
+        state = parse_url_state(search)
+        if not state:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
         
-        dataset = params.get('dataset', [None])[0]
-        embedding = params.get('embedding', [None])[0]
-        color_by = params.get('color', [None])[0]
-        viz_mode = params.get('mode', ['cells'])[0]
-        
-        # Only update if we have valid parameters
-        if not dataset or not embedding or not color_by:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        
-        # Verify dataset exists in options
-        if dataset_options:
-            valid_datasets = [opt['value'] for opt in dataset_options]
-            if dataset not in valid_datasets:
-                logger.warning(f"Dataset {dataset} not found in options")
-                return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        
-        # Only update if values are different from current state
-        if dataset == current_dataset:
-            logger.info("Dataset already selected, skipping update")
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        
-        logger.info(f"Initializing from URL with dataset={dataset}, embedding={embedding}, color={color_by}, mode={viz_mode}")
-        return dataset, embedding, color_by, viz_mode
-        
+        return (
+            state.get('dataset'),
+            state.get('embedding'),
+            state.get('color'),
+            state.get('mode', 'cells'),
+            state.get('gene')
+        )
     except Exception as e:
         logger.error(f"Error initializing from URL: {str(e)}")
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 # Callback to handle cell selection
 @callback(
