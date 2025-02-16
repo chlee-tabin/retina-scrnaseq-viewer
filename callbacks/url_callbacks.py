@@ -30,17 +30,18 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
         return no_update, no_update, no_update, no_update, no_update
     
     if not search:
-        return no_update, no_update, no_update, no_update, no_update
+        # Return defaults instead of no_update for viz_mode
+        return no_update, no_update, no_update, 'random', no_update
     
     state = parse_url_state(search)
     if not state:
-        return no_update, no_update, no_update, no_update, no_update
+        return no_update, no_update, no_update, 'random', no_update
     
     return (
         state.get('dataset'),
         state.get('embedding'),
         state.get('color'),
-        state.get('mode', 'cells'),
+        state.get('mode', 'random'),  # Default to 'random'
         state.get('gene')
     )
 

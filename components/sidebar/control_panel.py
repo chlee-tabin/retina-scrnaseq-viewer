@@ -31,14 +31,15 @@ def create_control_panel():
                     )
                 ], id='gene-select-container', style={'display': 'none'}),
                 
-                html.Label("Visualization Mode:", className="mt-3"),
+                html.Label("Plot Order:", className="mt-3"),
                 dcc.RadioItems(
                     id='viz-mode',
                     options=[
-                        {'label': 'Single cells', 'value': 'cells'},
-                        {'label': 'Metacells', 'value': 'metacells'}
+                        {'label': 'Random', 'value': 'random'},
+                        {'label': 'Ascending', 'value': 'ordered_asc'},
+                        {'label': 'Descending', 'value': 'ordered_desc'}
                     ],
-                    value='cells'
+                    value='random'
                 )
             ])
         ])

@@ -80,15 +80,25 @@ def update_plot(data_store, embedding, color_by, gene, viz_mode, selection_data,
             'y': y,
             'color': color_series
         })
+        
+        # Order points based on visualization mode
+        if viz_mode in ['ordered_asc', 'ordered_desc'] and color_series is not None:
+            ascending = viz_mode == 'ordered_asc'
+            if treat_as_categorical:
+                # For categorical data, group by categories
+                df = df.sort_values('color', ascending=ascending)
+            else:
+                # For continuous data, sort by value
+                df = df.sort_values('color', ascending=ascending)
+        elif viz_mode == 'random':
+            # Randomly shuffle the points
+            df = df.sample(frac=1, random_state=42)
+        
         logger.debug(f"DataFrame head:\n{df.head()}")
         
-        if viz_mode == 'cells':
-            color_label = gene if color_by == 'gene_expression' else color_by
-            logger.debug(f"Creating scatter plot with color_by='{color_label}'")
-            fig = create_scatter_plot(df, embedding, color_label, treat_as_categorical)
-        else:
-            logger.debug(f"Visualization mode '{viz_mode}' not handled")
-            fig = create_scatter_plot(df, embedding, color_by, treat_as_categorical)
+        color_label = gene if color_by == 'gene_expression' else color_by
+        logger.debug(f"Creating scatter plot with color_by='{color_label}'")
+        fig = create_scatter_plot(df, embedding, color_label, treat_as_categorical)
         
         if selection_data and selection_data.get('indices'):
             logger.debug(f"Updating plot with selection indices: {selection_data['indices']}")

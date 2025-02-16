@@ -17,9 +17,12 @@ def decode_state(encoded_state):
 
 def create_share_url(base_url, state_dict):
     """Create shareable URL with encoded state"""
-    encoded_state = encode_state(state_dict)
-    params = {'state': encoded_state}
-    return f"{base_url}?{urlencode(params)}"
+    # Ensure mode is set to 'random' if not specified
+    if 'mode' not in state_dict:
+        state_dict['mode'] = 'random'
+    elif state_dict['mode'] not in ['random', 'ordered_asc', 'ordered_desc']:
+        state_dict['mode'] = 'random'
+    return f"{base_url}?{urlencode(state_dict)}"
 
 def parse_url_state(url_search):
     """Parse state from URL search parameters"""

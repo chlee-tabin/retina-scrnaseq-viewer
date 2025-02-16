@@ -12,7 +12,8 @@ DEFAULT_CONFIG = {
         'colorscales': {
             'continuous': 'viridis',
             'categorical': 'Set3'
-        }
+        },
+        'default_viz_mode': 'random'
     },
     'metacell_settings': {
         'bin_size': 50,
