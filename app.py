@@ -15,22 +15,35 @@ import yaml
 from datetime import datetime
 from pathlib import Path
 
+# Import layouts
+from layouts.sidebar import create_sidebar
+from layouts.main import create_main_panel
+
+# Import callbacks
+from callbacks.dataset_callbacks import *
+from callbacks.selection_callbacks import *
+from callbacks.url_callbacks import *
+from callbacks.main_callbacks import *
+
+# Import utilities
+from utils.data_loading import load_adata, load_dataset_config, validate_datasets
+from utils.config import load_config
+from utils.error_handling import handle_callback_error, log_callback_info
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize the Dash app with bootstrap theme
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
+app = dash.Dash(
+    __name__, 
+    external_stylesheets=[dbc.themes.BOOTSTRAP], 
+    suppress_callback_exceptions=True
+)
 server = app.server
 
-# Cache for loading AnnData fiyes
-
-@lru_cache(maxsize=2)
-def load_adata(filename):
-    logger.info(f"Starting to load {filename}")
-    adata = sc.read_h5ad(filename)
-    logger.info(f"Successfully loaded {filename} with {adata.n_obs} cells")
-    return adata
+# Load configuration
+config = load_config()
 
 # Function to create 2D histogram (metacells) with improved binning and aggregation
 def create_metacells(x, y, values=None, n_bins=50):
@@ -63,85 +76,32 @@ def create_metacells(x, y, values=None, n_bins=50):
         return H_values, xedges, yedges
     return H, xedges, yedges
 
-# Load dataset configuration
-def load_dataset_config(config_path='datasets_config.yml'):
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-def validate_datasets(config):
-    """Validate that all dataset files exist and are accessible"""
-    valid_datasets = {}
-    for id, dataset in config['datasets'].items():
-        file_path = Path(dataset['file_path'])
-        if file_path.exists() and file_path.suffix == '.h5ad':
-            valid_datasets[id] = dataset
-            logger.info(f"Validated dataset: {dataset['title']}")
-        else:
-            logger.warning(f"Dataset file not found or invalid: {file_path}")
-    return valid_datasets
-
-# Modified layout with dataset selector and info panel
+# Main layout with fixed sidebar
 app.layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
+    dcc.Store(id='data-store'),
+    dcc.Store(id='selection-store'),
+    dcc.Store(id='url-parameters'),
+    dcc.Store(id='initial-load-flag', data=True),
     
     dbc.Row([
-        dbc.Col([
-            html.H1("Single-cell Data Viewer", className="mb-4"),
-            dbc.Card([
-                dbc.CardBody([
-                    # Dataset selection and information
-                    html.Div([
-                        html.Label("Select Dataset:"),
-                        dcc.Dropdown(
-                            id='dataset-select',
-                            placeholder="Choose a dataset"
-                        ),
-                        # Dataset info panel
-                        html.Div(id='dataset-info', className='mt-3'),
-                        # Add share button and URL
-                        dbc.Button("Share View", id="share-button", color="primary", className="mt-3"),
-                        dbc.Input(id="share-url", type="text", style={'display': 'none'}, className="mt-2"),
-                    ], className='mb-4'),
-                    
-                    # Loading spinner
-                    dcc.Loading(
-                        id="loading-upload",
-                        type="circle",
-                        children=[
-                            html.Div(id="loading-output"),
-                            html.Div([
-                                html.Label("Embedding:"),
-                                dcc.Dropdown(id='embedding-select', placeholder="Select embedding"),
-                                
-                                html.Label("Color by:"),
-                                dcc.Dropdown(id='color-select', placeholder="Select feature"),
-                                
-                                html.Label("Visualization Mode:"),
-                                dcc.RadioItems(
-                                    id='viz-mode',
-                                    options=[
-                                        {'label': 'Single cells', 'value': 'cells'},
-                                        {'label': 'Metacells', 'value': 'metacells'}
-                                    ],
-                                    value='cells'
-                                ),
-                            ], className="mt-3"),
-                        ]
-                    ),
-                    
-                    # Main plot and other components
-                    dcc.Graph(id='main-plot'),
-                    html.Div(id='selection-info', className='mt-3'),
-                    
-                    # Store components
-                    dcc.Store(id='data-store'),
-                    dcc.Store(id='selection-store'),
-                    dcc.Store(id='url-parameters'),
-                    dcc.Store(id='initial-load-flag', data=True),
-                ])
-            ])
-        ])
-    ])
+        # Fixed sidebar
+        dbc.Col(
+            create_sidebar(),
+            width=3,
+            className="position-fixed",
+            style={
+                "height": "100vh",
+                "overflowY": "auto"
+            }
+        ),
+        # Main content with offset
+        dbc.Col(
+            create_main_panel(),
+            width=9,
+            className="offset-3"
+        )
+    ], className="g-0")  # g-0 removes gutters
 ], fluid=True)
 
 # Callback to initialize dataset dropdown
@@ -355,7 +315,8 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
                 labels={'x': f'{embedding}_1', 'y': f'{embedding}_2'},
                 title=f'Single-cell visualization - {embedding}',
                 color_discrete_sequence=px.colors.qualitative.Set3 if treat_as_categorical else None,
-                color_continuous_scale='viridis' if not treat_as_categorical else None
+                color_continuous_scale='viridis' if not treat_as_categorical else None,
+                hover_data=None
             )
             
             # Add custom styling for UMAP plots

@@ -1,0 +1,16 @@
+plot_settings:
+  height: '85vh'
+  marker_size: 5
+  opacity: 0.7
+  colorscales:
+    continuous: 'viridis'
+    categorical: 'Set3'
+  show_opacity_control: true
+
+metacell_settings:
+  bin_size: 50
+  smoothing: 1.0
+
+layout_settings:
+  sidebar_width: 3
+  main_width: 9 
