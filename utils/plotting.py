@@ -1,6 +1,8 @@
 import plotly.express as px
 import pandas as pd
 import numpy as np
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
 def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, selection_data=None):
     """
@@ -129,15 +131,102 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
         y_label = f'{embedding}_2'
 
     if treat_as_categorical:
-        # Create separate plots for each category
+        # Get unique categories and their counts
         categories = df['color'].unique()
-        fig = px.histogram2d_categorical(
-            df, x='x', y='y', color='color',
-            nbinsx=bin_size, nbinsy=bin_size,
-            facet_col='color', facet_col_wrap=3,
-            labels={'x': x_label, 'y': y_label},
-            title=f'Binned visualization - {embedding} by {color_by}'
+        n_cols = min(4, len(categories))  # Allow up to 4 columns instead of 3
+        n_rows = (len(categories) + n_cols - 1) // n_cols
+        
+        # Create subplot grid with tighter spacing
+        fig = make_subplots(
+            rows=n_rows, 
+            cols=n_cols,
+            subplot_titles=[str(cat) for cat in categories],
+            horizontal_spacing=0.05,  # Reduced from 0.1
+            vertical_spacing=0.05     # Reduced from 0.1
         )
+        
+        # Create a histogram for each category
+        for idx, category in enumerate(categories):
+            row = idx // n_cols
+            col = idx % n_cols
+            
+            mask = df['color'] == category
+            category_df = df[mask]
+            
+            H, xedges, yedges = np.histogram2d(
+                category_df['x'], 
+                category_df['y'], 
+                bins=bin_size
+            )
+            
+            # Keep original counts for hover text
+            H_display = H.copy()
+            
+            # Create mask for empty bins and set them to NaN for grey color
+            mask = H_display > 0
+            H_display[~mask] = np.nan
+            
+            x_centers = (xedges[:-1] + xedges[1:]) / 2
+            y_centers = (yedges[:-1] + yedges[1:]) / 2
+            
+            # Create hover data with bin indices and cell counts
+            hover_text = [[
+                f'Category: {category}<br>'
+                f'Bin: ({i},{j})<br>'
+                f'x: {x_centers[i]:.2f}<br>'
+                f'y: {y_centers[j]:.2f}<br>'
+                f'Cells: {int(H[i,j])}'
+                for j in range(H.shape[1])
+            ] for i in range(H.shape[0])]
+            
+            # Add heatmap for this category
+            fig.add_trace(
+                go.Heatmap(
+                    z=H_display.T,
+                    x=x_centers,
+                    y=y_centers,
+                    colorscale='viridis',
+                    customdata=hover_text,
+                    hovertemplate='%{customdata}',
+                    hoverongaps=False,
+                    showscale=False  # Hide individual colorbars
+                ),
+                row=row + 1,
+                col=col + 1
+            )
+        
+        # Update layout with more compact dimensions
+        fig.update_layout(
+            title=f'Binned visualization by {color_by} - {embedding}',
+            showlegend=False,
+            height=300 * n_rows,     # Reduced from 400
+            width=350 * n_cols,      # Reduced from 500
+            margin=dict(t=60, l=60, r=20, b=20)  # Tighter margins
+        )
+        
+        # Update axes for all subplots with equal aspect ratio
+        for i in range(1, n_rows + 1):
+            for j in range(1, n_cols + 1):
+                if (i-1) * n_cols + j <= len(categories):  # Only update existing subplots
+                    fig.update_xaxes(
+                        showgrid=False, 
+                        zeroline=False, 
+                        title_text=x_label,
+                        constrain='domain',
+                        row=i, 
+                        col=j
+                    )
+                    fig.update_yaxes(
+                        showgrid=False, 
+                        zeroline=False, 
+                        title_text=y_label, 
+                        autorange=True,
+                        scaleanchor=f"x{(i-1)*n_cols + j}",  # Link to corresponding x-axis
+                        scaleratio=1,
+                        row=i, 
+                        col=j
+                    )
+    
     else:
         # For continuous values (including gene expression)
         H, xedges, yedges = np.histogram2d(
