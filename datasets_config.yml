@@ -3,7 +3,7 @@ last_updated: "2024-03-14"
 
 datasets:
   full_dataset:
-    title: "Full Retinal Dataset"
+    title: "Chick Full Retinal Dataset"
     description: "Full early chick retinal dataset from Cepko lab + publicly available reprocessed data from Emmerson lab"
     file_path: "data/20240815_full.h5ad"
     last_updated: "2025-02-15"
@@ -14,7 +14,7 @@ datasets:
       stage: "Early development"
       
   fabp7_dataset:
-    title: "FABP7+ RPCs"
+    title: "Subset: Chick FABP7+ RPCs"
     description: "Only FABP7+ RPCs with topographic layout"
     file_path: "data/20240815_fabp7.h5ad"
     last_updated: "2025-02-15"
@@ -25,7 +25,7 @@ datasets:
       cell_type: "FABP7+ RPCs"
       
   otx2neg_dataset:
-    title: "OTX2- Proliferative RPCs"
+    title: "Subset: Chick OTX2- Proliferative RPCs"
     description: "Proliferative RPCs without OTX2 expression"
     file_path: "data/20240815_otx2negRPC.h5ad"
     last_updated: "2025-02-15"
