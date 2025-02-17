@@ -15,6 +15,7 @@ import yaml
 from datetime import datetime
 from pathlib import Path
 import time
+import argparse
 
 # Import layouts
 from layouts.sidebar import create_sidebar
@@ -34,9 +35,14 @@ from utils.error_handling import handle_callback_error, log_callback_info
 from components.status_bar import create_status_bar
 from utils.plotting import create_scatter_plot, create_metacell_plot
 
-# Configure logging
+# Add command line argument parsing
+parser = argparse.ArgumentParser()
+parser.add_argument('-debug', action='store_true', help='Enable debug logging')
+args = parser.parse_args()
+
+# Configure logging based on command line argument
 logging.basicConfig(
-    level=logging.DEBUG,  # Set to DEBUG to capture all logs
+    level=logging.DEBUG if args.debug else logging.INFO,
     format='%(asctime)s %(levelname)s %(name)s %(message)s',
     handlers=[
         logging.FileHandler("app_debug.log"),
