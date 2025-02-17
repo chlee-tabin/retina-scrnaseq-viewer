@@ -109,6 +109,9 @@ def update_dataset_info(dataset_id, data_store):
     config = load_dataset_config()
     dataset = config['datasets'][dataset_id]
     
+    # Create the download link path
+    download_path = f"/download/{dataset['file_path']}"
+    
     return dbc.Card([
         dbc.CardBody([
             html.H5(dataset['title'], className='card-title'),
@@ -120,6 +123,16 @@ def update_dataset_info(dataset_id, data_store):
             html.P([
                 html.Strong("Number of Cells: "),
                 f"{data_store['n_cells']:,}" if data_store else "Loading..."
+            ], className='card-text'),
+            # Add download link
+            html.P([
+                html.Strong("Download: "),
+                html.A(
+                    "Download .h5ad file",
+                    href=download_path,
+                    download=dataset['file_path'].split('/')[-1],
+                    className="btn btn-outline-primary btn-sm"
+                )
             ], className='card-text')
         ])
     ]) 

@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 import time
 import argparse
+from flask import send_file
+import os
 
 # Import layouts
 from layouts.sidebar import create_sidebar
@@ -394,6 +396,23 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
     except Exception as e:
         logger.error(f"Error updating plot: {str(e)}")
         return {}
+
+# Add this after app initialization
+@server.route('/download/<path:filepath>')
+def download_file(filepath):
+    try:
+        # Ensure the filepath is safe and within the data directory
+        safe_path = os.path.join('data', os.path.basename(filepath))
+        if os.path.exists(safe_path):
+            return send_file(
+                safe_path,
+                as_attachment=True,
+                download_name=os.path.basename(filepath)
+            )
+        else:
+            return "File not found", 404
+    except Exception as e:
+        return str(e), 500
 
 if __name__ == '__main__':
     app.run_server(debug=True) 
