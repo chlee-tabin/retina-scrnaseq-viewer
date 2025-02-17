@@ -32,6 +32,7 @@ from utils.data_loading import load_adata, load_dataset_config, validate_dataset
 from utils.config import load_config
 from utils.error_handling import handle_callback_error, log_callback_info
 from components.status_bar import create_status_bar
+from utils.plotting import create_scatter_plot, create_metacell_plot
 
 # Configure logging
 logging.basicConfig(
@@ -350,74 +351,24 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
                     treat_as_categorical = True
                     color_series = color_series.astype('category')
         
-        if viz_mode == 'cells':
-            df = pd.DataFrame({
-                'x': x,
-                'y': y,
-                'color': color_series if color_by else None
-            })
-            
-            fig = px.scatter(
-                df, x='x', y='y', color='color',
-                labels={'x': f'{embedding}_1', 'y': f'{embedding}_2'},
-                title=f'Single-cell visualization - {embedding}',
-                color_discrete_sequence=px.colors.qualitative.Set3 if treat_as_categorical else None,
-                color_continuous_scale='viridis' if not treat_as_categorical else None,
-                hover_data=None
-            )
-            
-            # Add custom styling for UMAP plots
-            if 'umap' in embedding.lower():
-                fig.update_layout(
-                    plot_bgcolor='white',
-                    xaxis=dict(
-                        showgrid=False,
-                        showticklabels=False,
-                        scaleanchor="y",
-                        scaleratio=1,
-                    ),
-                    yaxis=dict(
-                        showgrid=False,
-                        showticklabels=False,
-                        scaleanchor="x",
-                        scaleratio=1,
-                    )
-                )
-            else:
-                # Maintain original 1:1 aspect ratio for non-UMAP plots
-                fig.update_layout(
-                    yaxis=dict(
-                        scaleanchor="x",
-                        scaleratio=1,
-                    )
-                )
-            
-            # Update selection styling
-            if selection_data and selection_data['indices']:
-                selected_indices = selection_data['indices']
-                fig.update_traces(
-                    selectedpoints=selected_indices,
-                    selected=dict(marker=dict(color='red')),
-                    unselected=dict(marker=dict(opacity=0.3))
-                )
+        # Create DataFrame for plotting
+        df = pd.DataFrame({
+            'x': x,
+            'y': y,
+            'color': color_series if color_by else None
+        })
         
-        else:
-            values = adata.obs[color_by].values if color_by else None
-            H, xedges, yedges = create_metacells(x, y, values)
-            
-            x_centers = (xedges[:-1] + xedges[1:]) / 2
-            y_centers = (yedges[:-1] + yedges[1:]) / 2
-            
-            fig = px.imshow(
-                H.T,
-                x=x_centers,
-                y=y_centers,
-                labels={'x': f'{embedding}_1', 'y': f'{embedding}_2'},
-                title=f'Metacell visualization - {embedding}',
-                aspect='equal'  # This already maintains 1:1 ratio for imshow
-            )
+        # Apply visualization mode ordering if specified
+        if viz_mode in ['ordered_asc', 'ordered_desc']:
+            if color_series is not None and not treat_as_categorical:
+                df = df.sort_values('color', 
+                                  ascending=(viz_mode == 'ordered_asc'))
         
-        # Parse URL to get view state and apply it
+        # Create the plot using the utility function
+        fig = create_scatter_plot(df, embedding, color_by, 
+                                treat_as_categorical, selection_data)
+        
+        # Apply view state from URL if available
         if url_search:
             params = parse_qs(url_search.lstrip('?'))
             try:
