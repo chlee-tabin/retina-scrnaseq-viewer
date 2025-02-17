@@ -3,7 +3,7 @@ import json
 import base64
 from urllib.parse import parse_qs, urlencode
 from utils.data_loading import load_adata, load_dataset_config
-from utils.plotting import create_scatter_plot, create_metacell_plot
+from utils.plotting import create_scatter_plot, create_metacell_plot, create_binned_plot
 import pandas as pd
 import logging
 from utils.processing import create_metacells, calculate_selection_stats
@@ -23,13 +23,16 @@ logger = logging.getLogger(__name__)
      Input('color-select', 'value'),
      Input('gene-select', 'value'),
      Input('viz-mode', 'value'),
+     Input('bin-number-slider', 'value'),
+     Input('percentile-slider', 'value'),
+     Input('enable-binning', 'value'),
      Input('selection-store', 'data'),
      Input('url', 'search')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode, selection_data, url_search):
+def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode, bin_number, percentile, enable_binning, selection_data, url_search):
     logger.debug("update_plot called with parameters:")
     logger.debug(f"data_store: {data_store}")
     logger.debug(f"embedding: {embedding}")
@@ -38,6 +41,9 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
     logger.debug(f"color_by: {color_by}")
     logger.debug(f"gene: {gene}")
     logger.debug(f"viz_mode: {viz_mode}")
+    logger.debug(f"bin_number: {bin_number}")
+    logger.debug(f"percentile: {percentile}")
+    logger.debug(f"enable_binning: {enable_binning}")
     logger.debug(f"selection_data: {selection_data}")
     logger.debug(f"url_search: {url_search}")
 
@@ -113,7 +119,23 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         
         color_label = gene if color_by == 'gene_expression' else color_by
         logger.debug(f"Creating scatter plot with color_by='{color_label}'")
-        fig = create_scatter_plot(df, embedding_name, color_label, treat_as_categorical)
+        
+        if embedding == 'custom_embedding' and enable_binning and 'enabled' in enable_binning:
+            fig = create_binned_plot(
+                df, 
+                embedding_name, 
+                color_label,
+                bin_size=bin_number,
+                percentile=percentile,
+                treat_as_categorical=treat_as_categorical
+            )
+        else:
+            fig = create_scatter_plot(
+                df, 
+                embedding_name, 
+                color_label, 
+                treat_as_categorical
+            )
         
         if selection_data and selection_data.get('indices'):
             logger.debug(f"Updating plot with selection indices: {selection_data['indices']}")
@@ -192,3 +214,22 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
     
     # Default return if not initializing from URL
     return options, options, None, None, container_style 
+
+@callback(
+    Output('viz-mode', 'style'),
+    [Input('embedding-select', 'value'),
+     Input('enable-binning', 'value')]
+)
+def toggle_plot_order(embedding, enable_binning):
+    if embedding == 'custom_embedding' and enable_binning and 'enabled' in enable_binning:
+        return {'display': 'none'}
+    return {'display': 'block'}
+
+@callback(
+    Output('binning-controls', 'style'),
+    [Input('enable-binning', 'value')]
+)
+def toggle_binning_controls(enable_binning):
+    if enable_binning and 'enabled' in enable_binning:
+        return {'display': 'block'}
+    return {'display': 'none'} 

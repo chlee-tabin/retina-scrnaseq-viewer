@@ -29,7 +29,34 @@ def create_control_panel():
                         dcc.Dropdown(
                             id='custom-y-select',
                             placeholder="Select Y-axis metric"
-                        )
+                        ),
+                        html.Label("Enable Binning:", className="mt-2"),
+                        dcc.Checklist(
+                            id='enable-binning',
+                            options=[{'label': 'Show binned view', 'value': 'enabled'}],
+                            value=[],
+                            className="mb-2"
+                        ),
+                        html.Div([
+                            html.Label("Number of bins:", className="mt-2"),
+                            dcc.Slider(
+                                id='bin-number-slider',
+                                min=2,
+                                max=50,
+                                step=1,
+                                value=50,
+                                marks={i: str(i) for i in [2, 10, 20, 30, 40, 50]},
+                            ),
+                            html.Label("Percentile cutoff:", className="mt-2"),
+                            dcc.Slider(
+                                id='percentile-slider',
+                                min=0,
+                                max=1,
+                                step=0.01,
+                                value=0.95,
+                                marks={i/10: str(i/10) for i in range(0, 11)},
+                            )
+                        ], id='binning-controls', style={'display': 'none'}),
                     ])
                 ], id='custom-embedding-container', 
                    className="mt-3",

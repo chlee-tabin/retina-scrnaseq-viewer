@@ -102,3 +102,101 @@ def create_metacell_plot(H, xedges, yedges, embedding):
         )
     
     return fig
+
+def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False):
+    """
+    Create a binned visualization of cells
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        DataFrame containing 'x', 'y', and 'color' columns
+    embedding : str
+        Name of the embedding
+    color_by : str
+        Name of the column used for coloring
+    bin_size : int
+        Number of bins for both x and y axes
+    percentile : float
+        Percentile cutoff for color scale
+    treat_as_categorical : bool
+        Whether to treat the color column as categorical
+    """
+    if ' vs ' in embedding:
+        x_label, y_label = embedding.split(' vs ')
+    else:
+        x_label = f'{embedding}_1'
+        y_label = f'{embedding}_2'
+
+    if treat_as_categorical:
+        # Create separate plots for each category
+        categories = df['color'].unique()
+        fig = px.histogram2d_categorical(
+            df, x='x', y='y', color='color',
+            nbinsx=bin_size, nbinsy=bin_size,
+            facet_col='color', facet_col_wrap=3,
+            labels={'x': x_label, 'y': y_label},
+            title=f'Binned visualization - {embedding} by {color_by}'
+        )
+    else:
+        # For continuous values (including gene expression)
+        H, xedges, yedges = np.histogram2d(
+            df['x'], df['y'], 
+            bins=bin_size,
+            weights=df['color'] if 'color' in df else None
+        )
+        H_counts, _, _ = np.histogram2d(df['x'], df['y'], bins=bin_size)
+        
+        # Create mask for empty bins
+        mask = H_counts > 0
+        
+        # Calculate mean values per bin
+        H[mask] = H[mask] / H_counts[mask]
+        
+        # Apply percentile cutoff to non-empty bins
+        if percentile < 1.0:
+            vmax = np.percentile(H[mask], percentile * 100)
+            H[H > vmax] = vmax
+        
+        # Set empty bins to NaN for grey color
+        H[~mask] = np.nan
+
+        x_centers = (xedges[:-1] + xedges[1:]) / 2
+        y_centers = (yedges[:-1] + yedges[1:]) / 2
+        
+        # Create bin indices for hover text
+        bin_indices_x = np.arange(len(x_centers))
+        bin_indices_y = np.arange(len(y_centers))
+        bin_indices_x, bin_indices_y = np.meshgrid(bin_indices_x, bin_indices_y)
+        
+        fig = px.imshow(
+            H.T,  # Transpose to match the expected orientation
+            x=x_centers,
+            y=y_centers,
+            labels={'x': x_label, 'y': y_label, 'color': color_by},
+            title=f'Binned visualization - {embedding}',
+            color_continuous_scale='viridis',
+            aspect='equal'
+        )
+        
+        # Create hover data with bin indices and cell counts
+        hover_text = [[
+            f'Bin: ({i},{j})<br>'
+            f'x: {x_centers[i]:.2f}<br>'
+            f'y: {y_centers[j]:.2f}<br>'
+            f'Value: {H[i,j]:.2f}<br>'
+            f'Cells: {int(H_counts[i,j])}'
+            for j in range(H.shape[1])
+        ] for i in range(H.shape[0])]
+        
+        # Update traces with hover template and fix y-axis orientation
+        fig.update_traces(
+            customdata=hover_text,
+            hovertemplate='%{customdata}',
+            hoverongaps=False  # Disable hover for empty bins
+        )
+        
+        # Fix y-axis orientation (minus at bottom, plus at top)
+        fig.update_yaxes(autorange=True)  # This will ensure proper orientation
+
+    return fig

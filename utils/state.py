@@ -21,10 +21,16 @@ def create_share_url(base_url, state_dict):
     if state_dict.get('embedding') == 'custom_embedding':
         state_dict['custom_x'] = state_dict.get('custom_x')
         state_dict['custom_y'] = state_dict.get('custom_y')
+        state_dict['bins'] = state_dict.get('bins', 50)
+        state_dict['percentile'] = state_dict.get('percentile', 0.95)
+        state_dict['enable_binning'] = state_dict.get('enable_binning', [])
     else:
         # Remove custom embedding parameters if not using custom embedding
         state_dict.pop('custom_x', None)
         state_dict.pop('custom_y', None)
+        state_dict.pop('bins', None)
+        state_dict.pop('percentile', None)
+        state_dict.pop('enable_binning', None)
     
     encoded_state = encode_state(state_dict)
     return f"{base_url}?state={encoded_state}"
