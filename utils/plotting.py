@@ -3,9 +3,16 @@ import pandas as pd
 import numpy as np
 
 def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False):
+    # For custom embedding, use the actual column names
+    if ' vs ' in embedding:
+        x_label, y_label = embedding.split(' vs ')
+    else:
+        x_label = f'{embedding}_1'
+        y_label = f'{embedding}_2'
+    
     fig = px.scatter(
         df, x='x', y='y', color='color',
-        labels={'x': f'{embedding}_1', 'y': f'{embedding}_2'},
+        labels={'x': x_label, 'y': y_label},
         title=f'Single-cell visualization - {embedding}',
         color_discrete_sequence=px.colors.qualitative.Set3 if treat_as_categorical else None,
         color_continuous_scale='viridis' if not treat_as_categorical else None,

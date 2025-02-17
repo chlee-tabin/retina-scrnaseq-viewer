@@ -56,7 +56,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 return {}
             x = adata.obs[custom_x].values
             y = adata.obs[custom_y].values
-            embedding_name = f'{custom_x} vs {custom_y}'
+            embedding_name = f'{custom_x} vs {custom_y}'  # Use selected column names
         else:
             if embedding is None:
                 logger.warning("Embedding is None")
@@ -103,13 +103,10 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         if viz_mode in ['ordered_asc', 'ordered_desc'] and color_series is not None:
             ascending = viz_mode == 'ordered_asc'
             if treat_as_categorical:
-                # For categorical data, group by categories
                 df = df.sort_values('color', ascending=ascending)
             else:
-                # For continuous data, sort by value
                 df = df.sort_values('color', ascending=ascending)
         elif viz_mode == 'random':
-            # Randomly shuffle the points
             df = df.sample(frac=1, random_state=42)
         
         logger.debug(f"DataFrame head:\n{df.head()}")
