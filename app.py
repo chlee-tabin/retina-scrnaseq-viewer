@@ -57,6 +57,7 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.BOOTSTRAP], 
     suppress_callback_exceptions=True
 )
+app.title = "Single-cell Data Viewer"  # Set the title for the browser tab
 server = app.server
 
 # Load configuration

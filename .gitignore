@@ -32,3 +32,6 @@ env/
 # System files
 .DS_Store
 Thumbs.db
+
+# Log files
+app_debug.log

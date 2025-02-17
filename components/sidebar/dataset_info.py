@@ -1,9 +1,18 @@
-from dash import html
+from dash import html, dcc
 import dash_bootstrap_components as dbc
 from utils.error_handling import handle_callback_error
 
 def create_dataset_info():
     return html.Div([
+        # Dataset selector dropdown
+        html.Label("Dataset:"),
+        dcc.Dropdown(
+            id='dataset-select',
+            placeholder="Select dataset",
+            className="mb-3"
+        ),
+        
+        # Dataset info card
         dbc.Card([
             dbc.CardBody([
                 html.Div(id='dataset-info'),
