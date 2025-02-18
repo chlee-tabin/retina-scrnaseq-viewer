@@ -18,6 +18,7 @@ import time
 import argparse
 from flask import send_file
 import os
+import scipy.sparse
 
 # Import layouts
 from layouts.sidebar import create_sidebar
@@ -345,26 +346,42 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
     try:
         adata = load_adata(data_store['filename'])
         
-        x = adata.obsm[embedding][:, 0]
-        y = adata.obsm[embedding][:, 1]
+        # Handle custom embedding with better error checking
+        if embedding == 'custom_embedding':
+            if not custom_x or not custom_y:
+                logger.warning("Custom embedding x or y not selected")
+                return {}
+            x = adata.obs[custom_x].values
+            y = adata.obs[custom_y].values
+            embedding_name = f'{custom_x} vs {custom_y}'
+        else:
+            if embedding is None:
+                logger.warning("Embedding is None")
+                return {}
+            x = adata.obsm[embedding][:, 0]
+            y = adata.obsm[embedding][:, 1]
+            embedding_name = embedding
         
-        # Determine if color column should be treated as categorical
-        color_series = adata.obs[color_by] if color_by else None
-        treat_as_categorical = False
-        if color_series is not None:
-            if color_series.dtype.name in ['category', 'object']:
-                treat_as_categorical = True
-            elif np.issubdtype(color_series.dtype, np.integer):
-                n_unique = len(color_series.unique())
-                if n_unique <= 50:
-                    treat_as_categorical = True
-                    color_series = color_series.astype('category')
+        # Handle color series with proper None checking
+        if color_by == 'gene_expression':
+            if not gene:
+                color_series = None
+            else:
+                color_series = adata[:, gene].X.toarray().flatten() if scipy.sparse.issparse(adata.X) else adata[:, gene].X
+                treat_as_categorical = False
+        else:
+            color_series = adata.obs[color_by] if color_by else None
+            if color_series is not None:
+                treat_as_categorical = (
+                    color_series.dtype.name in ['category', 'object'] or
+                    (pd.api.types.is_integer_dtype(color_series) and len(color_series.unique()) <= 50)
+                )
         
-        # Create DataFrame for plotting
+        # Create DataFrame with proper handling of None values
         df = pd.DataFrame({
             'x': x,
             'y': y,
-            'color': color_series if color_by else None
+            'color': color_series if color_series is not None else pd.Series([None] * len(x))
         })
         
         # Apply visualization mode ordering if specified
