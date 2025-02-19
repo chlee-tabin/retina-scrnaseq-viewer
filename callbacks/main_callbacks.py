@@ -34,44 +34,31 @@ logger = logging.getLogger(__name__)
 @log_callback_info
 def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode, bin_number, percentile, enable_binning, selection_data, url_search):
     logger.debug("update_plot called with parameters:")
-    logger.debug(f"data_store: {data_store}")
-    logger.debug(f"embedding: {embedding}")
-    logger.debug(f"custom_x: {custom_x}")
-    logger.debug(f"custom_y: {custom_y}")
-    logger.debug(f"color_by: {color_by}")
-    logger.debug(f"gene: {gene}")
-    logger.debug(f"viz_mode: {viz_mode}")
-    logger.debug(f"bin_number: {bin_number}")
-    logger.debug(f"percentile: {percentile}")
-    logger.debug(f"enable_binning: {enable_binning}")
-    logger.debug(f"selection_data: {selection_data}")
-    logger.debug(f"url_search: {url_search}")
-
-    if data_store is None:
-        logger.warning("Data store is None")
-        return {}
     
-    try:
-        adata = load_adata(data_store['filename'])
-        logger.debug(f"Loaded adata with {adata.n_obs} cells and {adata.n_vars} genes")
+    # Initialize treat_as_categorical as False by default
+    treat_as_categorical = False
+    
+    if not data_store or not embedding:
+        return {}
         
-        # Handle custom embedding
+    try:
+        config = load_dataset_config()
+        adata = load_adata(data_store['filename'])
+        
+        # Get coordinates based on embedding type
         if embedding == 'custom_embedding':
             if not custom_x or not custom_y:
-                logger.warning("Custom embedding x or y not selected")
                 return {}
-            x = adata.obs[custom_x].values
-            y = adata.obs[custom_y].values
-            embedding_name = f'{custom_x} vs {custom_y}'  # Use selected column names
+            x = adata.obs[custom_x]
+            y = adata.obs[custom_y]
+            x_label = custom_x
+            y_label = custom_y
         else:
-            if embedding is None:
-                logger.warning("Embedding is None")
-                return {}
-            x = adata.obsm[embedding][:, 0]
-            y = adata.obsm[embedding][:, 1]
-            embedding_name = embedding
-        
-        logger.debug(f"Embedding '{embedding_name}' extracted: x[:5]={x[:5]}, y[:5]={y[:5]}")
+            coordinates = adata.obsm[embedding]
+            x = coordinates[:, 0]
+            y = coordinates[:, 1]
+            x_label = f"{embedding}_1"
+            y_label = f"{embedding}_2"
         
         # Handle gene expression
         if color_by == 'gene_expression':
@@ -92,86 +79,39 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
             color_series = adata.obs[color_by] if color_by else None
             if color_series is not None:
                 logger.debug(f"Color series dtype: {color_series.dtype}")
-            treat_as_categorical = (
-                color_series.dtype.name in ['category', 'object'] or
-                (pd.api.types.is_integer_dtype(color_series) and len(color_series.unique()) <= 50)
-            )
+                treat_as_categorical = (
+                    color_series.dtype.name in ['category', 'object'] or
+                    (pd.api.types.is_integer_dtype(color_series) and len(color_series.unique()) <= 50)
+                )
             logger.debug(f"treat_as_categorical: {treat_as_categorical}")
         
-        logger.debug("Creating DataFrame for plotting")
+        # Create DataFrame for plotting
         df = pd.DataFrame({
             'x': x,
             'y': y,
             'color': color_series
         })
         
-        # Order points based on visualization mode
-        if viz_mode in ['ordered_asc', 'ordered_desc'] and color_series is not None:
-            ascending = viz_mode == 'ordered_asc'
-            if treat_as_categorical:
-                df = df.sort_values('color', ascending=ascending)
-            else:
-                df = df.sort_values('color', ascending=ascending)
-        elif viz_mode == 'random':
-            df = df.sample(frac=1, random_state=42)
-        
-        logger.debug(f"DataFrame head:\n{df.head()}")
-        
-        color_label = gene if color_by == 'gene_expression' else color_by
-        logger.debug(f"Creating scatter plot with color_by='{color_label}'")
-        
-        if embedding == 'custom_embedding' and enable_binning and 'enabled' in enable_binning:
+        # Create the plot
+        if enable_binning:
             fig = create_binned_plot(
-                df, 
-                embedding_name, 
-                color_label,
+                df, embedding, color_by,
                 bin_size=bin_number,
                 percentile=percentile,
                 treat_as_categorical=treat_as_categorical
             )
         else:
             fig = create_scatter_plot(
-                df, 
-                embedding_name, 
-                color_label, 
-                treat_as_categorical
+                df, embedding, color_by,
+                treat_as_categorical=treat_as_categorical
             )
         
-        if selection_data and selection_data.get('indices'):
-            logger.debug(f"Updating plot with selection indices: {selection_data['indices']}")
-            fig.update_traces(
-                selectedpoints=selection_data['indices'],
-                selected=dict(marker=dict(opacity=1)),
-                unselected=dict(marker=dict(opacity=0.1))
-            )
-        
-        logger.debug("Plot created successfully")
         return fig
-    
+        
     except Exception as e:
         logger.error(f"Error updating plot: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {} 
-
-@callback(
-    [Output('gene-select-container', 'style'),
-     Output('gene-select', 'options')],
-    [Input('color-select', 'value'),
-     Input('data-store', 'data')]
-)
-@handle_callback_error
-@log_callback_info
-def update_gene_select(color_value, data_store):
-    logger.debug("update_gene_select called with:")
-    logger.debug(f"color_value: {color_value}")
-    logger.debug(f"data_store: {data_store}")
-
-    if color_value == 'gene_expression' and data_store and 'genes' in data_store:
-        gene_options = [{'label': gene, 'value': gene} for gene in data_store['genes']]
-        logger.debug(f"Gene options generated: {gene_options[:5]}...")  # Log first 5 for brevity
-        return {'display': 'block'}, gene_options
-    logger.debug("Hiding gene-select container")
-    return {'display': 'none'}, [] 
+        logger.error(f"Traceback:\n{traceback.format_exc()}")
+        return {}
 
 @callback(
     [Output('custom-x-select', 'options'),

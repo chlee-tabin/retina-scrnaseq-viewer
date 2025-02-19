@@ -74,7 +74,11 @@ def create_control_panel():
                         html.H6("Gene Selection", className="card-subtitle mb-2 text-muted"),
                         dcc.Dropdown(
                             id='gene-select',
-                            placeholder="Type gene name..."
+                            placeholder="Type gene name...",
+                            searchable=True,
+                            optionHeight=35,
+                            persistence=False,  # Ensure fresh search results each time
+                            clearable=True
                         )
                     ])
                 ], id='gene-select-container', 

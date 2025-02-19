@@ -212,7 +212,7 @@ def update_dataset_info(dataset_id, data_store):
 @log_callback_info
 def update_data(dataset_id, url_search, current_color, current_gene):
     if not dataset_id:
-        return None, [], [], None, None, ""
+        return None, [], [], None, None, ""  # Return 6 values instead of 8
     
     try:
         config = load_dataset_config()
@@ -275,7 +275,7 @@ def update_data(dataset_id, url_search, current_color, current_gene):
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"
         logger.error(error_message)
-        return None, [], [], None, None, error_message
+        return None, [], [], None, None, error_message  # Return 6 values instead of 8
 
 # Update the initialization callback to be more robust
 @callback(

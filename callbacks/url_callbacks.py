@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
      Output('bin-number-slider', 'value', allow_duplicate=True),
      Output('percentile-slider', 'value', allow_duplicate=True),
      Output('enable-binning', 'value', allow_duplicate=True),
-     Output('custom-embedding-container', 'style', allow_duplicate=True)],
+     Output('custom-embedding-container', 'style', allow_duplicate=True),
+     Output('gene-select-container', 'style', allow_duplicate=True),
+     Output('gene-select', 'options', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     [State('dataset-select', 'options'),
@@ -33,14 +35,19 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
     triggered_id = ctx.triggered_id if ctx.triggered_id else 'url.search'
     
     if triggered_id == 'url.pathname':
-        return no_update, no_update, no_update, no_update, no_update, no_update, no_update, 50, 0.95, [], no_update
+        return (no_update, no_update, no_update, no_update, no_update, 
+                no_update, no_update, 50, 0.95, [], no_update, no_update, no_update)
     
     if not search:
-        return no_update, no_update, no_update, 'random', no_update, no_update, no_update, 50, 0.95, [], {'display': 'none'}
+        return (no_update, no_update, no_update, 'random', no_update, 
+                no_update, no_update, 50, 0.95, [], {'display': 'none'}, 
+                {'display': 'none'}, [])
     
     state = parse_url_state(search)
     if not state:
-        return no_update, no_update, no_update, 'random', no_update, no_update, no_update, 50, 0.95, [], {'display': 'none'}
+        return (no_update, no_update, no_update, 'random', no_update, 
+                no_update, no_update, 50, 0.95, [], {'display': 'none'}, 
+                {'display': 'none'}, [])
     
     # Get custom embedding values and binning parameters
     custom_x = state.get('custom_x') if state.get('embedding') == 'custom_embedding' else None
@@ -51,6 +58,9 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
     
     # Show custom embedding container if custom embedding is selected
     container_style = {'display': 'block'} if state.get('embedding') == 'custom_embedding' else {'display': 'none'}
+    
+    # Determine gene select container visibility
+    gene_container_style = {'display': 'block'} if state.get('color') == 'gene_expression' else {'display': 'none'}
     
     return (
         state.get('dataset'),
@@ -63,7 +73,9 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
         bin_number,
         percentile,
         enable_binning,
-        container_style
+        container_style,
+        gene_container_style,
+        []  # Empty options, will be populated by the gene_select callback
     )
 
 @callback(
