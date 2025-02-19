@@ -195,13 +195,26 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
                 col=col + 1
             )
         
-        # Update layout with more compact dimensions
+        # For categorical values, use fixed dimensions that scale reasonably with the number of categories
+        base_height = 300  # Base height per row
+        base_width = 350   # Base width per column
+        
+        # Calculate total dimensions with some reasonable limits
+        max_rows = 4  # Maximum number of rows before scrolling
+        n_rows = min(len(categories), max_rows)
+        n_cols = (len(categories) + max_rows - 1) // max_rows  # Ceiling division
+        
+        total_height = base_height * n_rows
+        total_width = base_width * n_cols
+        
+        # Create the figure with appropriate dimensions
         fig.update_layout(
             title=f'Binned visualization by {color_by} - {embedding}',
             showlegend=False,
-            height=300 * n_rows,     # Reduced from 400
-            width=350 * n_cols,      # Reduced from 500
-            margin=dict(t=60, l=60, r=20, b=20)  # Tighter margins
+            height=total_height,
+            width=total_width,
+            margin=dict(t=60, l=60, r=20, b=20),
+            grid=dict(rows=n_rows, columns=n_cols)
         )
         
         # Update axes for all subplots with equal aspect ratio
@@ -287,5 +300,13 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
         
         # Fix y-axis orientation (minus at bottom, plus at top)
         fig.update_yaxes(autorange=True)  # This will ensure proper orientation
+
+        # For continuous values (including gene expression), use a fixed pixel height
+        fig.update_layout(
+            title=f'Binned visualization - {embedding}',
+            showlegend=False,
+            height=800,  # Fixed pixel height instead of viewport units
+            margin=dict(t=60, l=60, r=20, b=20)
+        )
 
     return fig
