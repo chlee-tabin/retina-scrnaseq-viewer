@@ -45,51 +45,19 @@ def update_data(dataset_id, current_color, current_gene):
     
     try:
         config = load_dataset_config()
-        dataset = config['datasets'][dataset_id]
-        adata = load_adata(dataset['file_path'])
+        data_store = load_data_store(dataset_id)
         
-        # Determine column types
-        column_types = {}
-        for col in adata.obs.columns:
-            if pd.api.types.is_numeric_dtype(adata.obs[col]):
-                column_types[col] = 'numeric'
-            else:
-                column_types[col] = 'categorical'
-        
-        # Create embedding list including custom embedding option
-        available_embeddings = list(adata.obsm.keys())
-        
-        data_store = {
-            'filename': dataset['file_path'],
-            'n_cells': adata.n_obs,
-            'embeddings': available_embeddings + ['custom_embedding'],  # Add custom_embedding to the list
-            'metadata_cols': list(adata.obs.columns),
-            'genes': list(adata.var_names),
-            'column_types': column_types
-        }
-        
-        # Create embedding options with custom embedding as first option
-        embedding_options = [
-            {'label': 'Custom embedding by meta scores', 'value': 'custom_embedding'}
-        ] + [
-            {'label': emb, 'value': emb} for emb in available_embeddings
-        ]
-        
-        color_options = [
-            {'label': 'Gene Expression', 'value': 'gene_expression'}
-        ]
-        color_options.extend([
-            {'label': col, 'value': col} 
-            for col in data_store['metadata_cols']
+        embedding_options = get_embedding_options(data_store)
+        color_options = get_color_options([
+            {'label': 'Gene Expression', 'value': 'gene_expression'},
+            *[{'label': col, 'value': col} for col in data_store['metadata_cols']]
         ])
         
         valid_color_values = ['gene_expression'] + data_store['metadata_cols']
-        color_value = (url_color if url_color in valid_color_values 
-                      else current_color if current_color in valid_color_values 
+        color_value = (current_color if current_color in valid_color_values 
                       else None)
         
-        gene_value = (url_gene if url_gene in data_store['genes']
-                     else current_gene if current_gene in data_store['genes']
+        gene_value = (current_gene if current_gene in data_store['genes']
                      else None)
         
         return data_store, embedding_options, color_options, color_value, gene_value, ""
