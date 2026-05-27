@@ -18,6 +18,7 @@ import time
 import argparse
 from flask import send_file
 import os
+import re
 import scipy.sparse
 
 # Import layouts
@@ -59,6 +60,15 @@ logger = logging.getLogger(__name__)
 # into the image. Dataset paths in datasets_config.yml are resolved relative to
 # this directory (see utils/data_loading.resolve_data_path).
 DATA_DIR = os.getenv("DATA_DIR", "data")
+
+# On platforms where the data is not present locally (e.g. Hugging Face Spaces),
+# optionally download the configured datasets into DATA_DIR from a Hugging Face
+# repo. No-op unless HF_DATA_REPO is set (see utils/data_provision).
+try:
+    from utils.data_provision import ensure_datasets
+    ensure_datasets(load_dataset_config())
+except Exception as e:
+    logger.error(f"Dataset provisioning step failed (continuing): {e}")
 
 # Initialize the Dash app with bootstrap theme
 app = dash.Dash(
@@ -165,6 +175,25 @@ def initialize_dataset_dropdown(pathname):
         logger.error(f"Error loading dataset configuration: {str(e)}")
         return []
 
+# GEO accession links: turn "GSE#####" tokens into links to the GEO record page.
+_GSE_RE = re.compile(r'(GSE\d+)')
+
+def _linkify_gse(text):
+    """Render a description string with any GSE##### accession as a GEO hyperlink."""
+    parts = _GSE_RE.split(str(text))
+    children = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:  # the captured GSE accession
+            children.append(html.A(
+                part,
+                href=f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={part}",
+                target="_blank",
+                rel="noopener noreferrer",
+            ))
+        elif part:
+            children.append(part)
+    return children
+
 # Callback to display dataset information
 @callback(
     Output('dataset-info', 'children'),
@@ -181,11 +210,17 @@ def update_dataset_info(dataset_id, data_store):
         
         # Get number of cells from data_store if available
         n_cells = f"{data_store['n_cells']:,}" if data_store and 'n_cells' in data_store else 'N/A'
-        
+
+        # Download link. Use the basename so it matches the /download route,
+        # which resolves the request relative to DATA_DIR (the config's leading
+        # "data/" is not part of the on-disk filename under DATA_DIR).
+        download_name = os.path.basename(dataset['file_path'])
+        download_path = f"/download/{download_name}"
+
         return dbc.Card([
             dbc.CardBody([
                 html.H5(dataset['title'], className='card-title'),
-                html.P(dataset['description'], className='card-text'),
+                html.P(_linkify_gse(dataset['description']), className='card-text'),
                 html.P([
                     html.Strong("Last Updated: "),
                     dataset['last_updated']
@@ -193,6 +228,15 @@ def update_dataset_info(dataset_id, data_store):
                 html.P([
                     html.Strong("Number of Cells: "),
                     n_cells
+                ], className='card-text'),
+                html.P([
+                    html.Strong("Download: "),
+                    html.A(
+                        "Download .h5ad file",
+                        href=download_path,
+                        download=download_name,
+                        className="btn btn-outline-primary btn-sm"
+                    )
                 ], className='card-text')
             ])
         ])
@@ -207,6 +251,7 @@ def update_dataset_info(dataset_id, data_store):
      Output('color-select', 'options', allow_duplicate=True),
      Output('color-select', 'value', allow_duplicate=True),
      Output('gene-select', 'value', allow_duplicate=True),
+     Output('gene-select', 'options', allow_duplicate=True),
      Output('loading-output', 'children', allow_duplicate=True)],
     [Input('dataset-select', 'value'),
      Input('url', 'search')],
@@ -218,7 +263,7 @@ def update_dataset_info(dataset_id, data_store):
 @log_callback_info
 def update_data(dataset_id, url_search, current_color, current_gene):
     if not dataset_id:
-        return None, [], [], None, None, ""  # Return 6 values instead of 8
+        return None, [], [], None, None, [], ""
     
     try:
         config = load_dataset_config()
@@ -266,22 +311,38 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             for col in data_store['metadata_cols']
         ])
         
-        # Determine color and gene values
+        # Determine color and gene values. Defaults when there is no URL state
+        # or prior selection: color by gene expression, and the dataset's
+        # configured default_gene (species-correct casing, e.g. FGF8 / Fgf8).
+        default_gene = dataset.get('default_gene')
         valid_color_values = ['gene_expression'] + data_store['metadata_cols']
-        color_value = (url_color if url_color in valid_color_values 
-                      else current_color if current_color in valid_color_values 
-                      else None)
+        if url_color in valid_color_values:
+            color_value = url_color
+        elif current_color in valid_color_values:
+            color_value = current_color
+        else:
+            color_value = 'gene_expression'
+
+        if url_gene in data_store['genes']:
+            gene_value = url_gene
+        elif current_gene in data_store['genes']:
+            gene_value = current_gene
+        elif default_gene in data_store['genes']:
+            gene_value = default_gene
+        else:
+            gene_value = None
         
-        gene_value = (url_gene if url_gene in data_store['genes']
-                     else current_gene if current_gene in data_store['genes']
-                     else None)
-        
-        return data_store, embedding_options, color_options, color_value, gene_value, ""
+        # Pre-populate gene options so the default gene's value is valid the
+        # moment it is set (a Dropdown value absent from its options is dropped
+        # client-side; gene options are otherwise filled by update_gene_select).
+        gene_options = [{'label': g, 'value': g} for g in sorted(data_store['genes'])]
+
+        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, ""
         
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"
         logger.error(error_message)
-        return None, [], [], None, None, error_message  # Return 6 values instead of 8
+        return None, [], [], None, None, [], error_message
 
 # Update the initialization callback to be more robust
 @callback(
@@ -335,93 +396,11 @@ def update_selection(selected_data, data_store):
     
     return selection_data, f"Selected {n_selected} cells"
 
-# Update the main plot callback to handle view state
-@callback(
-    Output('main-plot', 'figure'),
-    [Input('data-store', 'data'),
-     Input('embedding-select', 'value'),
-     Input('color-select', 'value'),
-     Input('viz-mode', 'value'),
-     Input('selection-store', 'data'),
-     Input('url', 'search')]
-)
-def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_search):
-    if data_store is None or embedding is None:
-        return {}
-    
-    try:
-        adata = load_adata(data_store['filename'])
-        
-        # Handle custom embedding with better error checking
-        if embedding == 'custom_embedding':
-            if not custom_x or not custom_y:
-                logger.warning("Custom embedding x or y not selected")
-                return {}
-            x = adata.obs[custom_x].values
-            y = adata.obs[custom_y].values
-            embedding_name = f'{custom_x} vs {custom_y}'
-        else:
-            if embedding is None:
-                logger.warning("Embedding is None")
-                return {}
-            x = adata.obsm[embedding][:, 0]
-            y = adata.obsm[embedding][:, 1]
-            embedding_name = embedding
-        
-        # Handle color series with proper None checking
-        if color_by == 'gene_expression':
-            if not gene:
-                color_series = None
-            elif gene not in adata.var_names:
-                logger.info(f"Gene '{gene}' not found in dataset; skipping gene coloring")
-                color_series = None
-            else:
-                color_series = adata[:, gene].X.toarray().flatten() if scipy.sparse.issparse(adata.X) else adata[:, gene].X
-                treat_as_categorical = False
-        else:
-            color_series = adata.obs[color_by] if color_by else None
-            if color_series is not None:
-                treat_as_categorical = (
-                    color_series.dtype.name in ['category', 'object'] or
-                    (pd.api.types.is_integer_dtype(color_series) and len(color_series.unique()) <= 50)
-                )
-        
-        # Create DataFrame with proper handling of None values
-        df = pd.DataFrame({
-            'x': x,
-            'y': y,
-            'color': color_series if color_series is not None else pd.Series([None] * len(x))
-        })
-        
-        # Apply visualization mode ordering if specified
-        if viz_mode in ['ordered_asc', 'ordered_desc']:
-            if color_series is not None and not treat_as_categorical:
-                df = df.sort_values('color', 
-                                  ascending=(viz_mode == 'ordered_asc'))
-        
-        # Create the plot using the utility function
-        fig = create_scatter_plot(df, embedding, color_by, 
-                                treat_as_categorical, selection_data)
-        
-        # Apply view state from URL if available
-        if url_search:
-            params = parse_qs(url_search.lstrip('?'))
-            try:
-                if 'view' in params:
-                    view_state = json.loads(base64.urlsafe_b64decode(params['view'][0]).decode('utf-8'))
-                    if 'xrange' in view_state and 'yrange' in view_state:
-                        fig.update_layout(
-                            xaxis_range=view_state['xrange'],
-                            yaxis_range=view_state['yrange']
-                        )
-            except Exception as e:
-                logger.warning(f"Failed to apply view state: {e}")
-        
-        return fig
-    
-    except Exception as e:
-        logger.error(f"Error updating plot: {str(e)}")
-        return {}
+# NOTE: the main-plot figure callback lives in callbacks/main_callbacks.py
+# (update_plot there handles custom embeddings, gene-expression coloring, plot
+# ordering, and binning). The earlier copy here was an incomplete duplicate
+# (it referenced custom_x/custom_y/gene that were not callback inputs) and has
+# been removed so there is one authoritative plot callback.
 
 # Add this after app initialization
 @server.route('/download/<path:filepath>')

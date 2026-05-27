@@ -13,6 +13,7 @@ def create_control_panel():
                 html.Label("Embedding:"),
                 dcc.Dropdown(
                     id='embedding-select',
+                    value='custom_embedding',  # default to the topographic DV/NT view
                     placeholder="Select embedding"
                 ),
                 

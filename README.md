@@ -11,7 +11,7 @@ pinned: false
 # Retina scRNA-seq Pattern Viewer
 
 An interactive [Plotly Dash](https://dash.plotly.com/) application for exploring
-single-cell RNA-seq data with spatial/topographic structure from developing
+single-cell RNA-seq data with spatial/topographic structure from the developing
 retina. It accompanies a manuscript on topographic gene expression in the early
 retina. Users can select a dataset, choose an embedding (UMAP or a **custom
 embedding built from two metadata score axes**, e.g. dorsoventral vs.
@@ -23,25 +23,31 @@ for download.
 ## Datasets
 
 The datasets served are declared in [`datasets_config.yml`](datasets_config.yml).
-The current configuration ships three early-chick retina datasets:
+The current configuration ships three cross-species retinal progenitor cell
+(RPC) datasets, each with inferred 2D topographic coordinates
+(`DV.Score`, `NT.Score`):
 
-| ID | Title | Description |
-|----|-------|-------------|
-| `full_dataset` | Chick Full Retinal Dataset | Full early chick retinal dataset (Cepko lab + reprocessed Emmerson lab data) |
-| `fabp7_dataset` | Subset: Chick FABP7+ RPCs | FABP7+ retinal progenitor cells with topographic layout |
-| `otx2neg_dataset` | Subset: Chick OTX2- Proliferative RPCs | Proliferative RPCs lacking OTX2 expression |
+| ID | Title | Cells | Source / attribution |
+|----|-------|-------|----------------------|
+| `chick_rpc` | Chick Retinal Progenitor Cells | 29,025 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Emerson et al.) |
+| `human_rpc` | Human Retinal Progenitor Cells | 21,793 | Reprocessed from GEO **GSE138002** (Sridhar et al.), **GSE234963**, **GSE246169** |
+| `mouse_rpc` | Mouse Retinal Progenitor Cells | 25,202 | Reprocessed from GEO **GSE139904**, **GSE118614** |
+
+Human and mouse datasets are reprocessed entirely from publicly available GEO
+series; chick data is in-house except one reprocessed public library. Please
+cite the original accessions above when reusing these data.
 
 > The `.h5ad` data files themselves are **not** committed to this repository
-> (they are git-ignored and can be large). See
-> [Data](#data-not-bundled) below for how to provide them at runtime.
+> (they are git-ignored and can be large). See [Data](#data-not-bundled) below
+> for how they are provided at runtime.
 
 To add a dataset, append an entry to `datasets_config.yml` with a `title`,
 `description`, `file_path` (relative to the data directory, e.g.
 `data/my_dataset.h5ad`), `last_updated`, and optional `metadata`. The app loads
 embeddings (`adata.obsm`), metadata columns (`adata.obs`) and genes
 (`adata.var_names`) dynamically from each file -- no code changes are required
-to add another chick dataset. (Adding **human/mouse** datasets is discussed in
-the PR description / "Still needed before public".)
+to add another dataset (any species; gene-name casing is taken verbatim from
+`var_names`).
 
 ## Configuration
 
@@ -50,29 +56,34 @@ Behavior is controlled by environment variables (all optional):
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `DASH_DEBUG` | `false` | Set to `true` to enable Dash debug mode + hot reload. Keep `false` in production. |
-| `DATA_DIR` | `data` | Directory holding the `.h5ad` files. Dataset paths in `datasets_config.yml` are resolved relative to this directory, so the data can be mounted/uploaded separately instead of baked into the image. |
+| `DATA_DIR` | `data` | Directory holding the `.h5ad` files. Dataset paths in `datasets_config.yml` are resolved relative to this directory. |
 | `PORT` | `7860` | Port the server listens on (Hugging Face Spaces expects `7860`). |
 | `HOST` | `0.0.0.0` | Bind address (`0.0.0.0` so the container is reachable). |
+| `HF_DATA_REPO` | _(unset)_ | If set (e.g. `username/retina-scrnaseq-data`), download the configured datasets from this Hugging Face repo into `DATA_DIR` at startup. No-op when unset. |
+| `HF_DATA_REPO_TYPE` | `dataset` | Type of the `HF_DATA_REPO` (`dataset`, `model`, or `space`). |
+| `HF_TOKEN` | _(unset)_ | Access token, only needed while `HF_DATA_REPO` is **private**. Set it as a Space *secret*, never in code. |
 
 Plot defaults (colors, marker size, bin size, etc.) live in
 [`config.yml`](config.yml).
 
 ## Data (not bundled)
 
-The `.h5ad` files are intentionally **not** part of the image or repo. Provide
-them at runtime by pointing `DATA_DIR` at a directory that contains the files
-referenced in `datasets_config.yml`. For example, with the default config the
-directory should contain:
+The `.h5ad` files are intentionally **not** part of the image or repo. There are
+two supported ways to provide them at runtime:
 
-```
-$DATA_DIR/20240815_full.h5ad
-$DATA_DIR/20240815_fabp7.h5ad
-$DATA_DIR/20240815_otx2negRPC.h5ad
-```
+1. **Local / mounted:** point `DATA_DIR` at a directory containing the files
+   referenced in `datasets_config.yml`. With the default config that is:
 
-On Hugging Face Spaces, upload the files into the Space (e.g. a `data/`
-directory in the Space repo, or a mounted dataset) and set `DATA_DIR`
-accordingly.
+   ```
+   $DATA_DIR/20250604_chick_RPC.h5ad
+   $DATA_DIR/20250604_human_RPC.h5ad
+   $DATA_DIR/20250604_mouse_RPC.h5ad
+   ```
+
+2. **Hugging Face repo (used on Spaces):** set `HF_DATA_REPO` to a Hugging Face
+   dataset repo holding those files. At startup the app downloads any missing
+   files into `DATA_DIR` (see [`utils/data_provision.py`](utils/data_provision.py)).
+   For a private data repo, also set `HF_TOKEN` as a Space secret.
 
 ## Run locally
 
@@ -100,15 +111,16 @@ Then open the printed URL in a browser.
 This app is set up as a **Docker** Space (see the YAML frontmatter at the top of
 this README, which Hugging Face reads, and the [`Dockerfile`](Dockerfile)).
 
-1. Create a new Space at <https://huggingface.co/new-space>, choosing
-   **Docker** as the SDK.
-2. Push this repository to the Space's git remote (or connect the GitHub repo).
-   Hugging Face builds the image from the `Dockerfile` and serves the app on
-   port `7860` (matching `app_port` in the frontmatter).
-3. Provide the data: upload your `.h5ad` files into the Space and set the
-   `DATA_DIR` variable (Space *Settings -> Variables and secrets*) if they are
-   not in the default `data/` directory. The `Dockerfile` does **not** copy any
-   data into the image.
+1. Create a new Space at <https://huggingface.co/new-space>, choosing **Docker**
+   as the SDK. Start it **private** for testing if you like.
+2. Push this repository to the Space's git remote. Hugging Face builds the image
+   from the `Dockerfile` and serves the app on port `7860` (matching `app_port`
+   in the frontmatter).
+3. Provide the data via a separate Hugging Face **dataset** repo: upload the
+   `.h5ad` files there, then set the Space variables `HF_DATA_REPO`
+   (e.g. `username/retina-scrnaseq-data`) and, while that repo is private,
+   `HF_TOKEN` (as a *secret*). The `Dockerfile` does **not** copy any data into
+   the image.
 4. Leave `DASH_DEBUG` unset (or `false`) for the public deployment.
 
 ## Project layout
@@ -122,5 +134,5 @@ Dockerfile             # Hugging Face Docker Space build
 callbacks/             # Dash callbacks (dataset, selection, URL, plotting, status)
 components/            # Reusable UI pieces (sidebar, status bar)
 layouts/               # Page layout (sidebar + main panel)
-utils/                 # Data loading, plotting, state encoding, monitoring, config
+utils/                 # Data loading, HF data provisioning, plotting, state, config
 ```

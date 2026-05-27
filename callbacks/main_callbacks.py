@@ -179,8 +179,11 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
             if custom_x in valid_values and custom_y in valid_values:
                 return options, options, custom_x, custom_y, container_style
     
-    # Default return if not initializing from URL
-    return options, options, None, None, container_style 
+    # Default return if not initializing from URL: pre-select the topographic
+    # axes (NT.Score on x, DV.Score on y) when those score columns exist.
+    default_x = 'NT.Score' if 'NT.Score' in numeric_cols else None
+    default_y = 'DV.Score' if 'DV.Score' in numeric_cols else None
+    return options, options, default_x, default_y, container_style
 
 @callback(
     Output('viz-mode', 'style'),
