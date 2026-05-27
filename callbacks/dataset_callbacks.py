@@ -9,106 +9,13 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-@callback(
-    Output('dataset-select', 'options', allow_duplicate=True),
-    Input('url', 'pathname'),
-    prevent_initial_call=True
-)
-@handle_callback_error
-@log_callback_info
-def initialize_dataset_dropdown(pathname):
-    config = load_dataset_config()
-    datasets = validate_datasets(config)
-    
-    return [
-        {'label': data['title'], 'value': dataset_id}
-        for dataset_id, data in datasets.items()
-    ]
-
-@callback(
-    [Output('data-store', 'data', allow_duplicate=True),
-     Output('embedding-select', 'options', allow_duplicate=True),
-     Output('color-select', 'options', allow_duplicate=True),
-     Output('color-select', 'value', allow_duplicate=True),
-     Output('gene-select', 'value', allow_duplicate=True),
-     Output('loading-output', 'children', allow_duplicate=True)],
-    [Input('dataset-select', 'value'),
-     State('color-select', 'value'),
-     State('gene-select', 'value')],
-    prevent_initial_call=True
-)
-@handle_callback_error
-@log_callback_info
-def update_data(dataset_id, current_color, current_gene):
-    if not dataset_id:
-        return None, [], [], None, None, ""
-    
-    try:
-        config = load_dataset_config()
-        data_store = load_data_store(dataset_id)
-        
-        embedding_options = get_embedding_options(data_store)
-        color_options = get_color_options([
-            {'label': 'Gene Expression', 'value': 'gene_expression'},
-            *[{'label': col, 'value': col} for col in data_store['metadata_cols']]
-        ])
-        
-        valid_color_values = ['gene_expression'] + data_store['metadata_cols']
-        color_value = (current_color if current_color in valid_color_values 
-                      else None)
-        
-        gene_value = (current_gene if current_gene in data_store['genes']
-                     else None)
-        
-        return data_store, embedding_options, color_options, color_value, gene_value, ""
-        
-    except Exception as e:
-        error_message = f"Error loading data: {str(e)}"
-        logger.error(error_message)
-        return None, [], [], None, None, error_message
-
-@callback(
-    Output('dataset-info', 'children', allow_duplicate=True),
-    [Input('dataset-select', 'value'),
-     Input('data-store', 'data')],
-    prevent_initial_call=True
-)
-@handle_callback_error
-@log_callback_info
-def update_dataset_info(dataset_id, data_store):
-    if not dataset_id:
-        return ""
-    
-    config = load_dataset_config()
-    dataset = config['datasets'][dataset_id]
-    
-    # Create the download link path
-    download_path = f"/download/{dataset['file_path']}"
-    
-    return dbc.Card([
-        dbc.CardBody([
-            html.H5(dataset['title'], className='card-title'),
-            html.P(dataset['description'], className='card-text'),
-            html.P([
-                html.Strong("Last Updated: "),
-                dataset['last_updated']
-            ], className='card-text'),
-            html.P([
-                html.Strong("Number of Cells: "),
-                f"{data_store['n_cells']:,}" if data_store else "Loading..."
-            ], className='card-text'),
-            # Add download link
-            html.P([
-                html.Strong("Download: "),
-                html.A(
-                    "Download .h5ad file",
-                    href=download_path,
-                    download=dataset['file_path'].split('/')[-1],
-                    className="btn btn-outline-primary btn-sm"
-                )
-            ], className='card-text')
-        ])
-    ])
+# NOTE: dataset-select options, data-store loading, and dataset-info rendering
+# (including the download link) are handled by the authoritative callbacks in
+# app.py (initialize_dataset_dropdown, update_data, update_dataset_info). The
+# earlier copies here were duplicates that referenced helpers which were never
+# implemented (load_data_store / get_embedding_options / get_color_options) and
+# built a broken download path; they have been removed. The gene-search
+# callback below is unique and remains the sole owner of its outputs.
 
 @callback(
     [Output('gene-select-container', 'style', allow_duplicate=True),

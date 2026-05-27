@@ -44,13 +44,14 @@ def _message_figure(text):
      Input('bin-number-slider', 'value'),
      Input('percentile-slider', 'value'),
      Input('enable-binning', 'value'),
+     Input('enable-smoothing', 'value'),
      Input('selection-store', 'data'),
      Input('url', 'search')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode, bin_number, percentile, enable_binning, selection_data, url_search):
+def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode, bin_number, percentile, enable_binning, enable_smoothing, selection_data, url_search):
     logger.debug("update_plot called with parameters:")
     
     # Initialize treat_as_categorical as False by default
@@ -121,11 +122,16 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         
         # Create the plot
         if enable_binning:
+            smooth_on = bool(enable_smoothing) and 'enabled' in enable_smoothing
+            smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+            min_cells = data_store.get('min_cells_per_bin', 1)
             fig = create_binned_plot(
                 df, embedding, color_by,
                 bin_size=bin_number,
                 percentile=percentile,
-                treat_as_categorical=treat_as_categorical
+                treat_as_categorical=treat_as_categorical,
+                smooth_sigma=smooth_sigma,
+                min_cells=min_cells
             )
         else:
             fig = create_scatter_plot(
@@ -179,8 +185,11 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
             if custom_x in valid_values and custom_y in valid_values:
                 return options, options, custom_x, custom_y, container_style
     
-    # Default return if not initializing from URL
-    return options, options, None, None, container_style 
+    # Default return if not initializing from URL: pre-select the topographic
+    # axes (NT.Score on x, DV.Score on y) when those score columns exist.
+    default_x = 'NT.Score' if 'NT.Score' in numeric_cols else None
+    default_y = 'DV.Score' if 'DV.Score' in numeric_cols else None
+    return options, options, default_x, default_y, container_style
 
 @callback(
     Output('viz-mode', 'style'),

@@ -1,37 +1,62 @@
-version: 1.0
-last_updated: "2024-03-14"
+version: 1.1
+last_updated: "2026-05-26"
 
+# Datasets served by the viewer. Paths are resolved relative to DATA_DIR
+# (default "data"); a leading "data/" is stripped and re-joined under DATA_DIR
+# (see utils/data_loading.resolve_data_path). The app reads embeddings (obsm),
+# metadata columns (obs) and genes (var_names) dynamically from each file, so
+# adding/replacing a dataset needs only an entry here -- no code changes.
+#
+# Provenance / attribution: chick data is in-house (Cepko Lab) except one
+# reprocessed public library; human and mouse datasets are reprocessed entirely
+# from publicly available GEO series (cited per dataset below).
 datasets:
-  full_dataset:
-    title: "Chick Full Retinal Dataset"
-    description: "Full early chick retinal dataset from Cepko lab + publicly available reprocessed data from Emmerson lab"
-    file_path: "data/20240815_full.h5ad"
-    last_updated: "2025-02-15"
-    author: "Cepko & Emmerson Labs"
+  chick_rpc:
+    title: "Chick Retinal Progenitor Cells"
+    description: "29,025 chick (Gallus gallus) retinal progenitor cells with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). In-house data (Cepko Lab) plus one reprocessed publicly available library (Emerson et al., GEO GSE142244)."
+    file_path: "data/20250604_chick_RPC.h5ad"
+    last_updated: "2025-06-04"
+    author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
+    default_gene: "FGF8"
+    smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
+    min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
     metadata:
       tissue: "Retina"
-      organism: "Chick"
-      stage: "Early development"
-      
-  fabp7_dataset:
-    title: "Subset: Chick FABP7+ RPCs"
-    description: "Only FABP7+ RPCs with topographic layout"
-    file_path: "data/20240815_fabp7.h5ad"
-    last_updated: "2025-02-15"
-    author: "Cepko Lab"
+      organism: "Chick (Gallus gallus)"
+      cell_type: "Retinal progenitor cells"
+      cells: "29,025"
+      data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Emerson et al.)"
+
+  human_rpc:
+    title: "Human Retinal Progenitor Cells"
+    description: "21,793 human (Homo sapiens) fetal retinal progenitor cells (PCW 7-11) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE138002 (Sridhar et al.), GSE234963, and GSE246169."
+    file_path: "data/20250604_human_RPC.h5ad"
+    last_updated: "2025-06-04"
+    author: "Reprocessed public data: GSE138002, GSE234963, GSE246169"
+    default_gene: "FGF8"
+    smooth_sigma: 0.5
+    min_cells_per_bin: 2
     metadata:
       tissue: "Retina"
-      organism: "Chick"
-      cell_type: "FABP7+ RPCs"
-      
-  otx2neg_dataset:
-    title: "Subset: Chick OTX2- Proliferative RPCs"
-    description: "Proliferative RPCs without OTX2 expression"
-    file_path: "data/20240815_otx2negRPC.h5ad"
-    last_updated: "2025-02-15"
-    author: "Cepko Lab"
+      organism: "Human (Homo sapiens)"
+      cell_type: "Retinal progenitor cells"
+      developmental_window: "PCW 7-11"
+      cells: "21,793"
+      data_source: "Reprocessed from GSE138002 (Sridhar et al.), GSE234963, GSE246169"
+
+  mouse_rpc:
+    title: "Mouse Retinal Progenitor Cells"
+    description: "25,202 mouse (Mus musculus) retinal progenitor cells (E13-E16) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE139904 and GSE118614."
+    file_path: "data/20250604_mouse_RPC.h5ad"
+    last_updated: "2025-06-04"
+    author: "Reprocessed public data: GSE139904, GSE118614"
+    default_gene: "Fgf8"
+    smooth_sigma: 2.0
+    min_cells_per_bin: 5
     metadata:
       tissue: "Retina"
-      organism: "Chick"
-      cell_type: "OTX2- RPCs"
-      state: "Proliferative" 
+      organism: "Mouse (Mus musculus)"
+      cell_type: "Retinal progenitor cells"
+      developmental_window: "E13-E16"
+      cells: "25,202"
+      data_source: "Reprocessed from GSE139904, GSE118614"
