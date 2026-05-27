@@ -54,10 +54,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Directory that holds the .h5ad datasets. Configurable so the data can be
+# mounted/uploaded separately (e.g. on Hugging Face Spaces) rather than baked
+# into the image. Dataset paths in datasets_config.yml are resolved relative to
+# this directory (see utils/data_loading.resolve_data_path).
+DATA_DIR = os.getenv("DATA_DIR", "data")
+
 # Initialize the Dash app with bootstrap theme
 app = dash.Dash(
-    __name__, 
-    external_stylesheets=[dbc.themes.BOOTSTRAP], 
+    __name__,
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
     suppress_callback_exceptions=True
 )
 app.title = "Single-cell Data Viewer"  # Set the title for the browser tab
@@ -366,6 +372,9 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
         if color_by == 'gene_expression':
             if not gene:
                 color_series = None
+            elif gene not in adata.var_names:
+                logger.info(f"Gene '{gene}' not found in dataset; skipping gene coloring")
+                color_series = None
             else:
                 color_series = adata[:, gene].X.toarray().flatten() if scipy.sparse.issparse(adata.X) else adata[:, gene].X
                 treat_as_categorical = False
@@ -418,18 +427,41 @@ def update_plot(data_store, embedding, color_by, viz_mode, selection_data, url_s
 @server.route('/download/<path:filepath>')
 def download_file(filepath):
     try:
-        # Ensure the filepath is safe and within the data directory
-        safe_path = os.path.join('data', os.path.basename(filepath))
-        if os.path.exists(safe_path):
+        # Restrict downloads to files that live inside DATA_DIR. Resolve both
+        # the data directory and the requested file to absolute, symlink-free
+        # paths and confirm the request stays within DATA_DIR. This rejects
+        # path-traversal attempts (e.g. "../../etc/passwd", absolute paths, or
+        # symlink escapes) instead of relying on os.path.basename alone.
+        data_root = os.path.realpath(DATA_DIR)
+        requested = os.path.realpath(os.path.join(data_root, filepath))
+
+        # commonpath raises ValueError on mixed drives/relative inputs; treat
+        # any such case, or a resolved path outside data_root, as forbidden.
+        try:
+            within_data_dir = os.path.commonpath([data_root, requested]) == data_root
+        except ValueError:
+            within_data_dir = False
+
+        if not within_data_dir:
+            logger.warning(f"Rejected download outside DATA_DIR: {filepath}")
+            return "Forbidden", 403
+
+        if os.path.isfile(requested):
             return send_file(
-                safe_path,
+                requested,
                 as_attachment=True,
-                download_name=os.path.basename(filepath)
+                download_name=os.path.basename(requested)
             )
         else:
             return "File not found", 404
     except Exception as e:
-        return str(e), 500
+        logger.error(f"Error serving download '{filepath}': {e}")
+        return "Internal server error", 500
 
 if __name__ == '__main__':
-    app.run_server(debug=True) 
+    # Host/port/debug are environment-driven so the same entrypoint works
+    # locally and on Hugging Face Spaces (which expects 0.0.0.0:7860).
+    debug = os.getenv("DASH_DEBUG", "false").lower() == "true"
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "7860"))
+    app.run_server(host=host, port=port, debug=debug)

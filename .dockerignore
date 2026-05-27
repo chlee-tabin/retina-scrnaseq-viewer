@@ -1,0 +1,38 @@
+# Keep the build context small and ensure data/secrets are never baked into
+# the image, even though the Dockerfile uses `COPY . .`.
+.git
+.gitignore
+
+# Datasets are provided at runtime (mounted/uploaded), never copied in.
+data/
+*.h5ad
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# Local settings / secrets
+.env
+.env.local
+
+# Logs
+app_debug.log
+*.log
+
+# Editor / OS cruft
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -11,8 +11,26 @@ from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import parse_url_state
 import scipy.sparse
 import traceback
+import plotly.graph_objects as go
 
 logger = logging.getLogger(__name__)
+
+
+def _message_figure(text):
+    """Return an empty plot displaying a centered, user-friendly message."""
+    fig = go.Figure()
+    fig.add_annotation(
+        text=text,
+        xref="paper", yref="paper",
+        x=0.5, y=0.5, showarrow=False,
+        font=dict(size=16, color="#666")
+    )
+    fig.update_layout(
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        plot_bgcolor="white"
+    )
+    return fig
 
 @callback(
     Output('main-plot', 'figure', allow_duplicate=True),
@@ -66,6 +84,15 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
             if not gene:
                 logger.debug("No gene selected")
                 color_series = None
+            elif gene not in adata.var_names:
+                # Guard against genes absent from this dataset (e.g. a shared
+                # URL, a stale selection, or wrong gene-name casing across
+                # species). Return a friendly message instead of a 500.
+                logger.info(f"Gene '{gene}' not found in dataset '{data_store['filename']}'")
+                return _message_figure(
+                    f"Gene '{gene}' not found in this dataset. "
+                    "Try a different gene or check the name/casing."
+                )
             else:
                 if scipy.sparse.issparse(adata.X):
                     color_series = adata[:, gene].X.toarray().flatten()
