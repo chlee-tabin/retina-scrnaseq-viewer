@@ -18,6 +18,8 @@ datasets:
     last_updated: "2025-06-04"
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
     default_gene: "FGF8"
+    smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
+    min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
     metadata:
       tissue: "Retina"
       organism: "Chick (Gallus gallus)"
@@ -32,6 +34,8 @@ datasets:
     last_updated: "2025-06-04"
     author: "Reprocessed public data: GSE138002, GSE234963, GSE246169"
     default_gene: "FGF8"
+    smooth_sigma: 0.5
+    min_cells_per_bin: 2
     metadata:
       tissue: "Retina"
       organism: "Human (Homo sapiens)"
@@ -47,6 +51,8 @@ datasets:
     last_updated: "2025-06-04"
     author: "Reprocessed public data: GSE139904, GSE118614"
     default_gene: "Fgf8"
+    smooth_sigma: 2.0
+    min_cells_per_bin: 5
     metadata:
       tissue: "Retina"
       organism: "Mouse (Mus musculus)"

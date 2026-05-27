@@ -35,10 +35,16 @@ def create_control_panel():
                         dcc.Checklist(
                             id='enable-binning',
                             options=[{'label': 'Show binned view', 'value': 'enabled'}],
-                            value=[],
+                            value=['enabled'],  # default: binned ("metacell") spatial view
                             className="mb-2"
                         ),
                         html.Div([
+                            dcc.Checklist(
+                                id='enable-smoothing',
+                                options=[{'label': 'Gaussian smoothing', 'value': 'enabled'}],
+                                value=['enabled'],  # default: smoothed, matching the paper's spatial images
+                                className="mb-2"
+                            ),
                             html.Label("Number of bins:", className="mt-2"),
                             dcc.Slider(
                                 id='bin-number-slider',

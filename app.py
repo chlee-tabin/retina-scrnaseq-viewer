@@ -287,7 +287,11 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             'embeddings': available_embeddings + ['custom_embedding'],
             'metadata_cols': list(adata.obs.columns),
             'genes': list(adata.var_names),
-            'column_types': column_types  # Add column types to data store
+            'column_types': column_types,  # Add column types to data store
+            # Per-dataset spatial-binning params (mirror the analysis pipeline);
+            # used by the binned/smoothed view in main_callbacks.update_plot.
+            'smooth_sigma': dataset.get('smooth_sigma', 1.5),
+            'min_cells_per_bin': dataset.get('min_cells_per_bin', 1),
         }
         
         # Create embedding options with custom embedding as first option

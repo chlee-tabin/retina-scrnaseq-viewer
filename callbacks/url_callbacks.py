@@ -35,19 +35,17 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
     triggered_id = ctx.triggered_id if ctx.triggered_id else 'url.search'
     
     if triggered_id == 'url.pathname':
-        return (no_update, no_update, no_update, no_update, no_update, 
-                no_update, no_update, 50, 0.95, [], no_update, no_update, no_update)
+        # Pure pathname navigation (no shared state): leave controls untouched.
+        return (no_update,) * 13
     
     if not search:
-        return (no_update, no_update, no_update, 'random', no_update, 
-                no_update, no_update, 50, 0.95, [], {'display': 'none'}, 
-                {'display': 'none'}, [])
+        # No shared-URL state: leave every control at its layout/dataset default.
+        return (no_update,) * 13
     
     state = parse_url_state(search)
     if not state:
-        return (no_update, no_update, no_update, 'random', no_update, 
-                no_update, no_update, 50, 0.95, [], {'display': 'none'}, 
-                {'display': 'none'}, [])
+        # No shared-URL state: leave every control at its layout/dataset default.
+        return (no_update,) * 13
     
     # Get custom embedding values and binning parameters
     custom_x = state.get('custom_x') if state.get('embedding') == 'custom_embedding' else None

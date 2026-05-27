@@ -1,6 +1,7 @@
 import plotly.express as px
 import pandas as pd
 import numpy as np
+from scipy.ndimage import gaussian_filter
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
@@ -105,7 +106,7 @@ def create_metacell_plot(H, xedges, yedges, embedding):
     
     return fig
 
-def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False):
+def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=1):
     """
     Create a binned visualization of cells
     
@@ -249,19 +250,27 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
         )
         H_counts, _, _ = np.histogram2d(df['x'], df['y'], bins=bin_size)
         
-        # Create mask for empty bins
-        mask = H_counts > 0
-        
-        # Calculate mean values per bin
-        H[mask] = H[mask] / H_counts[mask]
-        
-        # Apply percentile cutoff to non-empty bins
-        if percentile < 1.0:
-            vmax = np.percentile(H[mask], percentile * 100)
-            H[H > vmax] = vmax
-        
-        # Set empty bins to NaN for grey color
-        H[~mask] = np.nan
+        # Bins with at least `min_cells` cells are valid; the rest are greyed.
+        valid = H_counts >= max(1, int(min_cells))
+
+        # Mean expression per valid bin (NaN elsewhere).
+        H_mean = np.full(H.shape, np.nan, dtype=float)
+        np.divide(H, H_counts, out=H_mean, where=valid)
+
+        # Optional Gaussian smoothing (mirrors the analysis pipeline's spatial
+        # images): fill invalid bins with 0, smooth, then re-mask them to NaN so
+        # empty regions stay grey instead of bleeding into the smoother.
+        if smooth_sigma and smooth_sigma > 0:
+            filled = np.where(valid, H_mean, 0.0)
+            H_mean = gaussian_filter(filled, sigma=float(smooth_sigma))
+            H_mean[~valid] = np.nan
+
+        # Percentile cutoff on the valid bins.
+        if percentile < 1.0 and np.any(valid):
+            vmax = np.nanpercentile(H_mean[valid], percentile * 100)
+            H_mean = np.where(H_mean > vmax, vmax, H_mean)
+
+        H = H_mean
 
         x_centers = (xedges[:-1] + xedges[1:]) / 2
         y_centers = (yedges[:-1] + yedges[1:]) / 2
