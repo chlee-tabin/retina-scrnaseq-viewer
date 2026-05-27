@@ -292,6 +292,7 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             # used by the binned/smoothed view in main_callbacks.update_plot.
             'smooth_sigma': dataset.get('smooth_sigma', 1.5),
             'min_cells_per_bin': dataset.get('min_cells_per_bin', 1),
+            'color_floor': dataset.get('color_floor', 0.05),
         }
         
         # Create embedding options with custom embedding as first option

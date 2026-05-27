@@ -131,7 +131,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 percentile=percentile,
                 treat_as_categorical=treat_as_categorical,
                 smooth_sigma=smooth_sigma,
-                min_cells=min_cells
+                min_cells=min_cells,
+                color_floor=data_store.get('color_floor', 0.05)
             )
         else:
             fig = create_scatter_plot(

@@ -13,7 +13,7 @@ last_updated: "2026-05-26"
 datasets:
   chick_rpc:
     title: "Chick Retinal Progenitor Cells"
-    description: "29,025 chick (Gallus gallus) retinal progenitor cells with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). In-house data (Cepko Lab) plus one reprocessed publicly available library (Emerson et al., GEO GSE142244)."
+    description: "29,025 chick (Gallus gallus) retinal progenitor cells with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Emerson et al., originally GSE142244)."
     file_path: "data/20250604_chick_RPC.h5ad"
     last_updated: "2025-06-04"
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
