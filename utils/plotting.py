@@ -106,7 +106,7 @@ def create_metacell_plot(H, xedges, yedges, embedding):
     
     return fig
 
-def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=1):
+def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=1, color_floor=0.05):
     """
     Create a binned visualization of cells
     
@@ -265,12 +265,24 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             H_mean = gaussian_filter(filled, sigma=float(smooth_sigma))
             H_mean[~valid] = np.nan
 
-        # Percentile cutoff on the valid bins.
-        if percentile < 1.0 and np.any(valid):
-            vmax = np.nanpercentile(H_mean[valid], percentile * 100)
-            H_mean = np.where(H_mean > vmax, vmax, H_mean)
+        # Color scale from the NONZERO valid bins (matches the analysis pipeline,
+        # which clips over expressing pixels rather than all bins). The floor
+        # keeps genes with little or no expression from being auto-stretched by
+        # the smoother into spurious "signal": a near-zero map (e.g. a gene in a
+        # handful of cells) renders near-blank, consistent with the raw view,
+        # instead of a bright blob.
+        pos = H_mean[valid & np.isfinite(H_mean) & (H_mean > 0)]
+        if pos.size and percentile < 1.0:
+            vmax = float(np.nanpercentile(pos, percentile * 100))
+        elif pos.size:
+            vmax = float(np.nanmax(pos))
+        else:
+            vmax = 0.0
+        vmax = max(vmax, float(color_floor))
+        H_mean = np.where(H_mean > vmax, vmax, H_mean)
 
         H = H_mean
+        color_vmax = vmax
 
         x_centers = (xedges[:-1] + xedges[1:]) / 2
         y_centers = (yedges[:-1] + yedges[1:]) / 2
@@ -287,6 +299,8 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             labels={'x': x_label, 'y': y_label, 'color': color_by},
             title=f'Binned visualization - {embedding}',
             color_continuous_scale='viridis',
+            zmin=0,
+            zmax=color_vmax,
             aspect='equal'
         )
         
