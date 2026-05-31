@@ -1,5 +1,5 @@
-version: 1.1
-last_updated: "2026-05-26"
+version: 1.2
+last_updated: "2026-05-31"
 
 # Datasets served by the viewer. Paths are resolved relative to DATA_DIR
 # (default "data"); a leading "data/" is stripped and re-joined under DATA_DIR
@@ -46,10 +46,28 @@ datasets:
 
   mouse_rpc:
     title: "Mouse Retinal Progenitor Cells"
-    description: "25,202 mouse (Mus musculus) retinal progenitor cells (E13-E16) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE139904 and GSE118614."
+    description: "26,505 mouse (Mus musculus) retinal progenitor cells (E13.5-E16) with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). Re-aligned with Cell Ranger 9.0.1 to the GRCm39-2024-A reference, integrated (Harmony) and subset to RPCs, from 7 publicly available 10x libraries across four GEO series: GSE118614 (Clark et al. 2019; E14, E16), GSE139904 (Balasubramanian et al. 2021; E13.5, control/wild-type cells only), GSE149040 (Wu et al. 2021; E13.5), and GSE122466 (Lo Giudice et al. 2019; E15.5)."
+    file_path: "data/20260528_mouse_RPC_cr9_e13e16.h5ad"
+    last_updated: "2026-05-28"
+    author: "Reprocessed public data (Cell Ranger 9.0.1 / GRCm39): GSE118614, GSE139904, GSE149040, GSE122466"
+    default_gene: "Fgf8"
+    smooth_sigma: 2.0
+    min_cells_per_bin: 5
+    metadata:
+      tissue: "Retina"
+      organism: "Mouse (Mus musculus)"
+      cell_type: "Retinal progenitor cells"
+      developmental_window: "E13.5-E16"
+      cells: "26,505"
+      reference: "Cell Ranger 9.0.1 / refdata-gex-GRCm39-2024-A"
+      data_source: "Reprocessed from GSE118614 (Clark et al.), GSE139904 (Balasubramanian et al., control cells only), GSE149040 (Wu et al.), GSE122466 (Lo Giudice et al.)"
+
+  mouse_rpc_legacy:
+    title: "Mouse Retinal Progenitor Cells (legacy)"
+    description: "LEGACY / SUPERSEDED -- retained only for reproducibility of the originally shared version; use the current 'Mouse Retinal Progenitor Cells' dataset for analysis. 25,202 mouse (Mus musculus) retinal progenitor cells (E13-E16), the original four-library alignment to an older mouse genome reference, reprocessed from GEO GSE139904 and GSE118614. One contributing library (GSE139904) was a pool of wild-type and Fgfr1/2-mutant cells that was not restricted to controls, so this version mixed genotypes. It has been superseded by the de-contaminated CR9 re-alignment above (Cell Ranger 9.0.1 / GRCm39-2024-A), which restricts that library to control cells only."
     file_path: "data/20250604_mouse_RPC.h5ad"
     last_updated: "2025-06-04"
-    author: "Reprocessed public data: GSE139904, GSE118614"
+    author: "Superseded (older reference; includes mixed-genotype cells): GSE139904, GSE118614"
     default_gene: "Fgf8"
     smooth_sigma: 2.0
     min_cells_per_bin: 5
@@ -59,4 +77,5 @@ datasets:
       cell_type: "Retinal progenitor cells"
       developmental_window: "E13-E16"
       cells: "25,202"
-      data_source: "Reprocessed from GSE139904, GSE118614"
+      status: "legacy / superseded by the CR9 (GRCm39) re-alignment"
+      data_source: "Reprocessed from GSE139904, GSE118614 (older reference; pooled wild-type + Fgfr1/2-mutant cells, not control-restricted)"

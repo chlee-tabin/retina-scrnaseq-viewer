@@ -24,18 +24,23 @@ for download.
 
 The datasets served are declared in [`datasets_config.yml`](datasets_config.yml).
 The current configuration ships three cross-species retinal progenitor cell
-(RPC) datasets, each with inferred 2D topographic coordinates
-(`DV.Score`, `NT.Score`):
+(RPC) datasets (chick, human, mouse), each with inferred 2D topographic
+coordinates (`DV.Score`, `NT.Score`), plus the prior mouse alignment retained as
+a labeled **legacy** entry:
 
 | ID | Title | Cells | Source / attribution |
 |----|-------|-------|----------------------|
 | `chick_rpc` | Chick Retinal Progenitor Cells | 29,025 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Emerson et al.) |
 | `human_rpc` | Human Retinal Progenitor Cells | 21,793 | Reprocessed from GEO **GSE138002** (Sridhar et al.), **GSE234963**, **GSE246169** |
-| `mouse_rpc` | Mouse Retinal Progenitor Cells | 25,202 | Reprocessed from GEO **GSE139904**, **GSE118614** |
+| `mouse_rpc` | Mouse Retinal Progenitor Cells | 26,505 | Reprocessed (Cell Ranger 9.0.1 / GRCm39) from GEO **GSE118614** (Clark et al.), **GSE139904** (Balasubramanian et al., control cells only), **GSE149040** (Wu et al.), **GSE122466** (Lo Giudice et al.) |
+| `mouse_rpc_legacy` | Mouse Retinal Progenitor Cells (legacy) | 25,202 | **Superseded** — original four-library alignment (older reference) from GEO **GSE139904**, **GSE118614**, which pooled wild-type + Fgfr1/2-mutant cells. Retained only for reproducibility; not for new analysis. |
 
 Human and mouse datasets are reprocessed entirely from publicly available GEO
-series; chick data is in-house except one reprocessed public library. Please
-cite the original accessions above when reusing these data.
+series; chick data is in-house except one reprocessed public library. The mouse
+dataset was re-aligned (Cell Ranger 9.0.1 / GRCm39-2024-A) to de-contaminate a
+mixed-genotype source library; the prior alignment is kept as `mouse_rpc_legacy`
+for reproducibility and should not be used for new analysis. Please cite the
+original accessions above when reusing these data.
 
 > The `.h5ad` data files themselves are **not** committed to this repository
 > (they are git-ignored and can be large). See [Data](#data-not-bundled) below
@@ -77,7 +82,8 @@ two supported ways to provide them at runtime:
    ```
    $DATA_DIR/20250604_chick_RPC.h5ad
    $DATA_DIR/20250604_human_RPC.h5ad
-   $DATA_DIR/20250604_mouse_RPC.h5ad
+   $DATA_DIR/20260528_mouse_RPC_cr9_e13e16.h5ad
+   $DATA_DIR/20250604_mouse_RPC.h5ad          # legacy (superseded)
    ```
 
 2. **Hugging Face repo (used on Spaces):** set `HF_DATA_REPO` to a Hugging Face
