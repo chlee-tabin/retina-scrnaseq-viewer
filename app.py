@@ -39,10 +39,12 @@ from utils.error_handling import handle_callback_error, log_callback_info
 from components.status_bar import create_status_bar
 from utils.plotting import create_scatter_plot, create_metacell_plot
 
-# Add command line argument parsing
+# Add command line argument parsing. Use parse_known_args (not parse_args) so that
+# importing this module under gunicorn -- where sys.argv carries gunicorn's own flags
+# (--bind, --workers, ...) -- does not abort with "unrecognized arguments".
 parser = argparse.ArgumentParser()
 parser.add_argument('-debug', action='store_true', help='Enable debug logging')
-args = parser.parse_args()
+args, _ = parser.parse_known_args()
 
 # Configure logging based on command line argument
 logging.basicConfig(
