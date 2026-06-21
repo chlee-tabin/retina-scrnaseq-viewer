@@ -20,6 +20,14 @@ datasets:
     default_gene: "FGF8"
     smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
     min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
+    gene_modules:              # functional gene groups for the dot-plot module selector
+      NPY system: [NPY, NPY1R, NPY2R, NPY4R, NPY5R, NPY6R]
+      Cell cycle: [MKI67, TOP2A, PCNA, CCND1, CCNB2, CDK1, UBE2C, BIRC5]
+      RPC / progenitor: [FABP7, VSX2, SOX2, SLC1A3, HES5, HES6]
+      Neurogenic onset: [ATOH7, NEUROD1, NEUROD4, NEUROG2, DLL1, OLIG2]
+      HAA / topographic: [FGF8, CYP26C1, CYP26A1, CRABP1, DUSP6, MYOF, BMP2]
+      Dorsoventral anchors: [ALDH1A1, TBX5, TBX3, BAMBI, EPHA7, ALDH1A3, VAX1, EPHB2]
+      Nasotemporal anchors: [FOXG1, HMX1, FOXD1, EPHA3, EPHA8]
     metadata:
       tissue: "Retina"
       organism: "Chick (Gallus gallus)"
@@ -35,6 +43,21 @@ datasets:
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
     default_gene: "FGF8"
     default_embedding: "X_umap.harmony"   # no DV/NT scores -> open on the Harmony UMAP
+    # Curated functional gene groups for the "Expression by group" dot-plot module
+    # selector. Genes absent from the dataset are silently skipped. (Clustering-derived
+    # modules can be added here later.)
+    gene_modules:
+      NPY system: [NPY, NPY1R, NPY2R, NPY4R, NPY5R, NPY6R]
+      Cell cycle: [MKI67, TOP2A, PCNA, CCND1, CCNB2, CDK1, UBE2C, BIRC5, CENPA, MCM2]
+      RPC / progenitor: [FABP7, VSX2, SOX2, SLC1A3, HES5, HES6]
+      Neurogenic: [ATOH7, NEUROD1, NEUROD4, NEUROG2, DLL1, DLL3, OLIG2, GADD45A]
+      HAA / topographic: [FGF8, CYP26C1, CYP26A1, CRABP1, DUSP6, SPRY1, MYOF, BMP2]
+      Dorsoventral anchors: [ALDH1A1, TBX5, TBX3, BAMBI, EPHA7, ALDH1A3, VAX1, EPHB2]
+      Nasotemporal anchors: [FOXG1, HMX1, FOXD1, EPHA3, EPHA8]
+      Amacrine (GABA/glycine): [TFAP2A, TFAP2B, GAD1, GAD2, SLC32A1, SLC6A9, PROX1]
+      Photoreceptor / cone: [OTX2, RXRG, THRB, RBP3, RP1]
+      Retinal ganglion: [RBPMS2, POU4F1, POU4F2, ISL1, EBF1]
+      Neuropeptides: [VIP, SST, PENK, TAC1, CARTPT, ADCYAP1, GRP, NMB, PNOC]
     metadata:
       tissue: "Retina"
       organism: "Chick (Gallus gallus)"
