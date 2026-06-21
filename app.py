@@ -33,7 +33,7 @@ from callbacks.main_callbacks import *
 from callbacks.status_callbacks import *
 
 # Import utilities
-from utils.data_loading import load_adata, load_dataset_config, validate_datasets
+from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding
 from utils.config import load_config
 from utils.error_handling import handle_callback_error, log_callback_info
 from components.status_bar import create_status_bar
@@ -252,7 +252,8 @@ def update_dataset_info(dataset_id, data_store):
      Output('color-select', 'value', allow_duplicate=True),
      Output('gene-select', 'value', allow_duplicate=True),
      Output('gene-select', 'options', allow_duplicate=True),
-     Output('loading-output', 'children', allow_duplicate=True)],
+     Output('loading-output', 'children', allow_duplicate=True),
+     Output('embedding-select', 'value', allow_duplicate=True)],
     [Input('dataset-select', 'value'),
      Input('url', 'search')],
     [State('color-select', 'value'),
@@ -263,7 +264,7 @@ def update_dataset_info(dataset_id, data_store):
 @log_callback_info
 def update_data(dataset_id, url_search, current_color, current_gene):
     if not dataset_id:
-        return None, [], [], None, None, [], ""
+        return None, [], [], None, None, [], "", 'custom_embedding'
     
     try:
         config = load_dataset_config()
@@ -342,12 +343,20 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         # client-side; gene options are otherwise filled by update_gene_select).
         gene_options = [{'label': g, 'value': g} for g in sorted(data_store['genes'])]
 
-        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, ""
+        # Pick the embedding to open on: a UMAP for datasets without DV/NT spatial
+        # scores (e.g. the full-retina object) so they don't open on a blank custom
+        # plot; the topographic custom view for the spatial RPC datasets.
+        embedding_value = choose_default_embedding(
+            available_embeddings, set(data_store['metadata_cols']),
+            config_default=dataset.get('default_embedding'),
+            url_embedding=(state.get('embedding') if state else None))
+
+        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, "", embedding_value
         
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"
         logger.error(error_message)
-        return None, [], [], None, None, [], error_message
+        return None, [], [], None, None, [], error_message, 'custom_embedding'
 
 # Update the initialization callback to be more robust
 @callback(

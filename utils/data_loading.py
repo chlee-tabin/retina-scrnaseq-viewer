@@ -50,4 +50,27 @@ def validate_datasets(config):
             logger.info(f"Validated dataset: {dataset['title']}")
         else:
             logger.warning(f"Dataset file not found or invalid: {file_path}")
-    return valid_datasets 
+    return valid_datasets
+
+
+def choose_default_embedding(available_embeddings, obs_columns,
+                             config_default=None, url_embedding=None):
+    """Pick the embedding a dataset should open on.
+
+    Precedence: an embedding named in the shared URL > the dataset's configured
+    ``default_embedding`` > the topographic custom view when DV.Score & NT.Score
+    both exist (the spatial RPC datasets) > the first UMAP in obsm (so a dataset
+    WITHOUT spatial scores, e.g. the full-retina object, opens on its UMAP rather
+    than a blank custom-embedding plot) > ``'custom_embedding'`` as a last resort.
+    """
+    options = list(available_embeddings) + ['custom_embedding']
+    if url_embedding in options:
+        return url_embedding
+    if config_default in options:
+        return config_default
+    if 'DV.Score' in obs_columns and 'NT.Score' in obs_columns:
+        return 'custom_embedding'
+    umaps = [e for e in available_embeddings if 'umap' in e.lower()]
+    if umaps:
+        return umaps[0]
+    return available_embeddings[0] if available_embeddings else 'custom_embedding'

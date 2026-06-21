@@ -27,6 +27,23 @@ datasets:
       cells: "29,025"
       data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Emerson et al.)"
 
+  chick_full:
+    title: "Chick Retina — Full (all cell classes)"
+    description: "85,135 chick (Gallus gallus) embryonic retinal cells spanning all major classes — retinal progenitors (RPC), neurogenic cells, cone photoreceptors, horizontal cells, amacrine subtypes (GABAergic/glycinergic), and retinal ganglion cells, plus vascular/endothelial and interferon-responding cells. Navigable by UMAP (Harmony-integrated). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Emerson et al., GSE142244). Cell-type annotations were vetted with a uniquely-expressed-gene (U-method) specificity analysis and field-grounded horizontal/amacrine separation; cycling precursors are labeled separately. This full object has no inferred DV/NT topographic coordinates -- those apply to the chick RPC dataset."
+    file_path: "data/20260620_chick_full.h5ad"
+    last_updated: "2026-06-20"
+    author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
+    default_gene: "FGF8"
+    default_embedding: "X_umap.harmony"   # no DV/NT scores -> open on the Harmony UMAP
+    metadata:
+      tissue: "Retina"
+      organism: "Chick (Gallus gallus)"
+      cell_type: "All retinal cell classes (progenitors + differentiating neurons)"
+      cells: "85,135"
+      navigation: "UMAP (no DV/NT spatial scores; see the chick RPC dataset for topographic coordinates)"
+      annotation: "U-method-vetted; HC/AC split by LHX1+/PROX1+/GAD- field gate"
+      data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Emerson et al.)"
+
   human_rpc:
     title: "Human Retinal Progenitor Cells"
     description: "21,793 human (Homo sapiens) fetal retinal progenitor cells (PCW 7-11) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE138002 (Sridhar et al.), GSE234963, and GSE246169."
