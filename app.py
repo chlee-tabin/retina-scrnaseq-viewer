@@ -400,7 +400,7 @@ def initialize_from_url(search, dataset_options, current_dataset):
             state.get('dataset'),
             state.get('embedding'),
             state.get('color'),
-            state.get('mode', 'cells'),
+            state.get('mode', 'random'),  # 'random' is a valid viz-mode; 'cells' was not
             state.get('gene')
         )
     except Exception as e:

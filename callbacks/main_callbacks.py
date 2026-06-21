@@ -104,20 +104,21 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
 
         # ---- Expression-by-group view (violin/box/strip/dotplot) ----
         if plot_type == 'group':
-            if not group_gene:
-                return _message_figure("Select a gene to plot expression by group.")
             if not group_by:
                 return _message_figure("Select a categorical column to group by.")
 
-            # Dot plot of a gene set (module) x groups.
+            # Dot plot of a gene set (module) x groups. A module selection is
+            # self-sufficient (no single gene required); without a module, fall
+            # back to the chosen gene as a 1-gene dot plot.
             if group_style == 'dotplot':
                 gene_modules = data_store.get('gene_modules', {}) or {}
                 module_genes = gene_modules.get(gene_module) if gene_module else None
                 if module_genes:
                     genes = [g for g in module_genes if g in adata.var_names]
-                else:
-                    # No module selected -> 1-gene dot plot for the chosen gene.
+                elif group_gene:
                     genes = [group_gene] if group_gene in adata.var_names else []
+                else:
+                    return _message_figure("Select a gene or a gene module for the dot plot.")
                 if not genes:
                     return _message_figure(
                         "None of the selected genes are present in this dataset."
@@ -128,6 +129,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 return create_dotplot(expr_df, genes, group_by)
 
             # Violin / box / strip of one gene across groups.
+            if not group_gene:
+                return _message_figure("Select a gene to plot expression by group.")
             if group_gene not in adata.var_names:
                 return _message_figure(
                     f"Gene '{group_gene}' not found in this dataset. "
