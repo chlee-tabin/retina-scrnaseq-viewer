@@ -127,7 +127,7 @@ def create_metacell_plot(H, xedges, yedges, embedding):
     
     return fig
 
-def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=1, color_floor=0.05):
+def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=1, color_floor=0.05, bin_stat='mean'):
     """
     Create a binned visualization of cells
     
@@ -273,35 +273,38 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             smooth_sigma=smooth_sigma,
             min_cells=min_cells,
             color_floor=color_floor,
+            stat=bin_stat,
         )
+        is_pct = (bin_stat == 'frac_pos')
+        color_label = f"{color_by} (% detected)" if is_pct else color_by
 
         x_centers = (xedges[:-1] + xedges[1:]) / 2
         y_centers = (yedges[:-1] + yedges[1:]) / 2
-        
+
         # Create bin indices for hover text
         bin_indices_x = np.arange(len(x_centers))
         bin_indices_y = np.arange(len(y_centers))
         bin_indices_x, bin_indices_y = np.meshgrid(bin_indices_x, bin_indices_y)
-        
+
         fig = px.imshow(
             H.T,  # Transpose to match the expected orientation
             x=x_centers,
             y=y_centers,
-            labels={'x': x_label, 'y': y_label, 'color': color_by},
+            labels={'x': x_label, 'y': y_label, 'color': color_label},
             title=f'Binned visualization - {embedding}',
             color_continuous_scale='viridis',
             zmin=0,
             zmax=color_vmax,
             aspect='equal'
         )
-        
+
         # Create hover data with bin indices and cell counts
         hover_text = [[
             f'Bin: ({i},{j})<br>'
             f'x: {x_centers[i]:.2f}<br>'
             f'y: {y_centers[j]:.2f}<br>'
-            f'Value: {H[i,j]:.2f}<br>'
-            f'Cells: {int(H_counts[i,j])}'
+            + (f'% detected: {H[i,j]*100:.1f}%<br>' if is_pct else f'Value: {H[i,j]:.2f}<br>')
+            + f'Cells: {int(H_counts[i,j])}'
             for j in range(H.shape[1])
         ] for i in range(H.shape[0])]
         
@@ -326,23 +329,31 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
     return fig
 
 
-def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_cells=1, color_floor=0.05):
-    """Compute the per-bin mean of a continuous value over a 2D (x, y) grid.
+def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_cells=1,
+                 color_floor=0.05, stat='mean'):
+    """Compute a per-bin statistic of a continuous value over a 2D (x, y) grid.
 
     This is the shared spatial-binning math used by both create_binned_plot's
     continuous branch and create_dual_gene_figure, so the smoothing, masking and
     color-scale clipping stay identical across the single- and dual-gene views.
 
+    Parameters
+    ----------
+    stat : {'mean', 'frac_pos'}
+        'mean' -> per-bin mean of `vals` (default). 'frac_pos' -> per-bin
+        fraction of cells with vals > 0 (the topographic "% positive / detected"
+        map), in [0, 1].
+
     Returns
     -------
     H_mean : 2D float array
-        Per-bin mean (NaN for bins below the cell floor), clipped to vmax.
+        Per-bin statistic (NaN for bins below the cell floor), clipped to vmax.
     H_counts : 2D float array
         Cells per bin.
     xedges, yedges : 1D arrays
         Bin edges from np.histogram2d.
     vmax : float
-        Color-scale maximum (>= color_floor).
+        Color-scale maximum.
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -360,13 +371,15 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
         empty = np.full((nb, nb), np.nan, dtype=float)
         return empty, np.zeros_like(empty), edges, edges, float(color_floor)
 
-    H, xedges, yedges = np.histogram2d(x, y, bins=bin_size, weights=vals)
+    # Weight by the value (mean) or by a detected-indicator (fraction positive).
+    weights = (vals > 0).astype(float) if stat == 'frac_pos' else vals
+    H, xedges, yedges = np.histogram2d(x, y, bins=bin_size, weights=weights)
     H_counts, _, _ = np.histogram2d(x, y, bins=bin_size)
 
     # Bins with at least `min_cells` cells are valid; the rest are greyed.
     valid = H_counts >= max(1, int(min_cells))
 
-    # Mean expression per valid bin (NaN elsewhere).
+    # Per-bin statistic (mean, or fraction of cells positive); NaN elsewhere.
     H_mean = np.full(H.shape, np.nan, dtype=float)
     np.divide(H, H_counts, out=H_mean, where=valid)
 
@@ -379,9 +392,10 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
         H_mean[~valid] = np.nan
 
     # Color scale from the NONZERO valid bins (matches the analysis pipeline,
-    # which clips over expressing pixels rather than all bins). The floor keeps
-    # near-empty genes from being auto-stretched by the smoother into spurious
-    # "signal".
+    # which clips over expressing pixels rather than all bins). For 'frac_pos'
+    # the floor is small (so low-but-real detection still renders) and vmax is
+    # capped at 1.0 (it is a fraction).
+    floor = 0.01 if stat == 'frac_pos' else float(color_floor)
     pos = H_mean[valid & np.isfinite(H_mean) & (H_mean > 0)]
     if pos.size and percentile < 1.0:
         vmax = float(np.nanpercentile(pos, percentile * 100))
@@ -389,7 +403,9 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
         vmax = float(np.nanmax(pos))
     else:
         vmax = 0.0
-    vmax = max(vmax, float(color_floor))
+    vmax = max(vmax, floor)
+    if stat == 'frac_pos':
+        vmax = min(vmax, 1.0)
     H_mean = np.where(H_mean > vmax, vmax, H_mean)
 
     return H_mean, H_counts, xedges, yedges, vmax

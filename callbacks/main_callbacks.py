@@ -81,7 +81,8 @@ def _is_categorical_series(series):
      Input('group-style', 'value'),
      Input('gene-module-select', 'value'),
      Input('compare-genes', 'value'),
-     Input('gene-select-2', 'value')],
+     Input('gene-select-2', 'value'),
+     Input('bin-stat', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
@@ -89,7 +90,7 @@ def _is_categorical_series(series):
 def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode,
                 bin_number, percentile, enable_binning, enable_smoothing, selection_data,
                 url_search, plot_type, group_gene, group_by, group_split, group_style,
-                gene_module, compare_genes, gene2):
+                gene_module, compare_genes, gene2, bin_stat):
     logger.debug("update_plot called with parameters:")
 
     # Initialize treat_as_categorical as False by default
@@ -243,7 +244,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 treat_as_categorical=treat_as_categorical,
                 smooth_sigma=smooth_sigma,
                 min_cells=min_cells,
-                color_floor=data_store.get('color_floor', 0.05)
+                color_floor=data_store.get('color_floor', 0.05),
+                bin_stat=(bin_stat or 'mean'),
             )
         else:
             fig = create_scatter_plot(

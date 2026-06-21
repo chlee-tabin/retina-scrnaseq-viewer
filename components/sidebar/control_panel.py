@@ -55,6 +55,16 @@ def create_control_panel():
                                 className="mb-2"
                             ),
                             html.Div([
+                                html.Label("Bin color:", className="mt-2"),
+                                dcc.RadioItems(
+                                    id='bin-stat',
+                                    options=[
+                                        {'label': 'Mean expression', 'value': 'mean'},
+                                        {'label': '% positive (detected)', 'value': 'frac_pos'},
+                                    ],
+                                    value='mean',  # 'frac_pos' -> topographic map of fraction of cells expressing
+                                    className="mb-2",
+                                ),
                                 dcc.Checklist(
                                     id='enable-smoothing',
                                     options=[{'label': 'Gaussian smoothing', 'value': 'enabled'}],
