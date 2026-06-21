@@ -42,5 +42,11 @@ USER appuser
 
 EXPOSE 7860
 
-# app.py reads HOST/PORT/DASH_DEBUG from the environment.
-CMD ["python", "app.py"]
+# Serve under gunicorn (production WSGI). The Flask dev server (`python app.py`) is
+# single-threaded and can miss the platform readiness probe, which kept the Space
+# stuck "starting". 1 worker => a single shared in-memory dataset cache (cpu-basic is
+# 16 GB, datasets are multi-GB); --threads keeps the health check responsive while a
+# large .h5ad loads. Data is provisioned lazily/in-background (see app.py) so the port
+# binds immediately. `app:server` is the Flask WSGI app exposed by app.py.
+CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "1", "--threads", "4", \
+     "--timeout", "180", "--graceful-timeout", "30", "--access-logfile", "-", "app:server"]

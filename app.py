@@ -62,13 +62,23 @@ logger = logging.getLogger(__name__)
 DATA_DIR = os.getenv("DATA_DIR", "data")
 
 # On platforms where the data is not present locally (e.g. Hugging Face Spaces),
-# optionally download the configured datasets into DATA_DIR from a Hugging Face
-# repo. No-op unless HF_DATA_REPO is set (see utils/data_provision).
-try:
-    from utils.data_provision import ensure_datasets
-    ensure_datasets(load_dataset_config())
-except Exception as e:
-    logger.error(f"Dataset provisioning step failed (continuing): {e}")
+# download the configured datasets into DATA_DIR from a Hugging Face repo. This
+# runs in a BACKGROUND thread so it never blocks the web server from binding its
+# port -- the platform health check (and Space promotion) must not wait ~30-40 s
+# for ~6 GB to download. Each dataset is also fetched on-demand in load_adata if a
+# user selects it before the pre-warm reaches it. No-op unless HF_DATA_REPO is set.
+import threading
+
+
+def _prewarm_datasets():
+    try:
+        from utils.data_provision import ensure_datasets
+        ensure_datasets(load_dataset_config())
+    except Exception as e:
+        logger.error(f"Background dataset provisioning failed (continuing): {e}")
+
+
+threading.Thread(target=_prewarm_datasets, name="dataset-prewarm", daemon=True).start()
 
 # Initialize the Dash app with bootstrap theme
 app = dash.Dash(

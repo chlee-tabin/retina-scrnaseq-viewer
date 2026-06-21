@@ -30,6 +30,14 @@ def resolve_data_path(file_path):
 
 @lru_cache(maxsize=2)
 def load_adata(filename):
+    # Provision the file on first access (no-op if already on disk or if
+    # HF_DATA_REPO is unset). Lets the app start without blocking on downloads;
+    # the dataset is fetched the moment it is actually selected.
+    try:
+        from utils.data_provision import ensure_one_dataset
+        ensure_one_dataset(filename)
+    except Exception as e:  # noqa: BLE001 - fall through to the read, which will error clearly
+        logger.error(f"On-demand provisioning failed for {filename}: {e}")
     resolved = resolve_data_path(filename)
     logger.info(f"Starting to load {resolved}")
     adata = sc.read_h5ad(resolved)
@@ -41,15 +49,22 @@ def load_dataset_config(config_path='datasets_config.yml'):
         return yaml.safe_load(f)
 
 def validate_datasets(config):
-    """Validate that all dataset files exist and are accessible"""
+    """List the datasets the app should offer.
+
+    Datasets are provisioned lazily (downloaded on first selection in
+    ``load_adata`` -> ``ensure_one_dataset``), so a dataset is listed as long as
+    its configured path is an ``.h5ad`` -- we deliberately do NOT require the file
+    to already be on disk. This lets the dropdown populate immediately at startup
+    instead of being silently emptied while the background download runs (and lets
+    the server bind its port without waiting on any download).
+    """
     valid_datasets = {}
     for id, dataset in config['datasets'].items():
         file_path = Path(resolve_data_path(dataset['file_path']))
-        if file_path.exists() and file_path.suffix == '.h5ad':
+        if file_path.suffix == '.h5ad':
             valid_datasets[id] = dataset
-            logger.info(f"Validated dataset: {dataset['title']}")
         else:
-            logger.warning(f"Dataset file not found or invalid: {file_path}")
+            logger.warning(f"Dataset '{id}' has a non-.h5ad path, skipping: {file_path}")
     return valid_datasets
 
 
