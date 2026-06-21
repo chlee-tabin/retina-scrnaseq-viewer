@@ -306,6 +306,11 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             'smooth_sigma': dataset.get('smooth_sigma', 1.5),
             'min_cells_per_bin': dataset.get('min_cells_per_bin', 1),
             'color_floor': dataset.get('color_floor', 0.05),
+            # Optional per-dataset gene sets for the "Expression by group" dot
+            # plot, and a path to precomputed DEG results. Both default to
+            # absent/empty so datasets without them simply hide the controls.
+            'gene_modules': dataset.get('gene_modules', {}),
+            'deg_results_path': dataset.get('deg_results_path'),
         }
         
         # Create embedding options with custom embedding as first option

@@ -5,6 +5,27 @@ from scipy.ndimage import gaussian_filter
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
+
+def _message_figure(text):
+    """Return an empty figure with a centered, user-friendly message.
+
+    Mirrors callbacks.main_callbacks._message_figure but lives here so the
+    plotting helpers have a self-contained fallback (no callback import).
+    """
+    fig = go.Figure()
+    fig.add_annotation(
+        text=text,
+        xref="paper", yref="paper",
+        x=0.5, y=0.5, showarrow=False,
+        font=dict(size=16, color="#666"),
+    )
+    fig.update_layout(
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        plot_bgcolor="white",
+    )
+    return fig
+
 def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, selection_data=None):
     """
     Create a scatter plot with proper styling based on embedding type
@@ -242,47 +263,17 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
                     )
     
     else:
-        # For continuous values (including gene expression)
-        H, xedges, yedges = np.histogram2d(
-            df['x'], df['y'], 
-            bins=bin_size,
-            weights=df['color'] if 'color' in df else None
+        # For continuous values (including gene expression). The per-bin mean,
+        # smoothing, and color-scale math are factored into _binned_mean so the
+        # dual-gene side-by-side figure uses the identical computation.
+        H, H_counts, xedges, yedges, color_vmax = _binned_mean(
+            df['x'], df['y'], df['color'],
+            bin_size=bin_size,
+            percentile=percentile,
+            smooth_sigma=smooth_sigma,
+            min_cells=min_cells,
+            color_floor=color_floor,
         )
-        H_counts, _, _ = np.histogram2d(df['x'], df['y'], bins=bin_size)
-        
-        # Bins with at least `min_cells` cells are valid; the rest are greyed.
-        valid = H_counts >= max(1, int(min_cells))
-
-        # Mean expression per valid bin (NaN elsewhere).
-        H_mean = np.full(H.shape, np.nan, dtype=float)
-        np.divide(H, H_counts, out=H_mean, where=valid)
-
-        # Optional Gaussian smoothing (mirrors the analysis pipeline's spatial
-        # images): fill invalid bins with 0, smooth, then re-mask them to NaN so
-        # empty regions stay grey instead of bleeding into the smoother.
-        if smooth_sigma and smooth_sigma > 0:
-            filled = np.where(valid, H_mean, 0.0)
-            H_mean = gaussian_filter(filled, sigma=float(smooth_sigma))
-            H_mean[~valid] = np.nan
-
-        # Color scale from the NONZERO valid bins (matches the analysis pipeline,
-        # which clips over expressing pixels rather than all bins). The floor
-        # keeps genes with little or no expression from being auto-stretched by
-        # the smoother into spurious "signal": a near-zero map (e.g. a gene in a
-        # handful of cells) renders near-blank, consistent with the raw view,
-        # instead of a bright blob.
-        pos = H_mean[valid & np.isfinite(H_mean) & (H_mean > 0)]
-        if pos.size and percentile < 1.0:
-            vmax = float(np.nanpercentile(pos, percentile * 100))
-        elif pos.size:
-            vmax = float(np.nanmax(pos))
-        else:
-            vmax = 0.0
-        vmax = max(vmax, float(color_floor))
-        H_mean = np.where(H_mean > vmax, vmax, H_mean)
-
-        H = H_mean
-        color_vmax = vmax
 
         x_centers = (xedges[:-1] + xedges[1:]) / 2
         y_centers = (yedges[:-1] + yedges[1:]) / 2
@@ -332,4 +323,314 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             margin=dict(t=60, l=60, r=20, b=20)
         )
 
+    return fig
+
+
+def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_cells=1, color_floor=0.05):
+    """Compute the per-bin mean of a continuous value over a 2D (x, y) grid.
+
+    This is the shared spatial-binning math used by both create_binned_plot's
+    continuous branch and create_dual_gene_figure, so the smoothing, masking and
+    color-scale clipping stay identical across the single- and dual-gene views.
+
+    Returns
+    -------
+    H_mean : 2D float array
+        Per-bin mean (NaN for bins below the cell floor), clipped to vmax.
+    H_counts : 2D float array
+        Cells per bin.
+    xedges, yedges : 1D arrays
+        Bin edges from np.histogram2d.
+    vmax : float
+        Color-scale maximum (>= color_floor).
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    vals = np.asarray(vals, dtype=float)
+
+    H, xedges, yedges = np.histogram2d(x, y, bins=bin_size, weights=vals)
+    H_counts, _, _ = np.histogram2d(x, y, bins=bin_size)
+
+    # Bins with at least `min_cells` cells are valid; the rest are greyed.
+    valid = H_counts >= max(1, int(min_cells))
+
+    # Mean expression per valid bin (NaN elsewhere).
+    H_mean = np.full(H.shape, np.nan, dtype=float)
+    np.divide(H, H_counts, out=H_mean, where=valid)
+
+    # Optional Gaussian smoothing (mirrors the analysis pipeline's spatial
+    # images): fill invalid bins with 0, smooth, then re-mask them to NaN so
+    # empty regions stay grey instead of bleeding into the smoother.
+    if smooth_sigma and smooth_sigma > 0:
+        filled = np.where(valid, H_mean, 0.0)
+        H_mean = gaussian_filter(filled, sigma=float(smooth_sigma))
+        H_mean[~valid] = np.nan
+
+    # Color scale from the NONZERO valid bins (matches the analysis pipeline,
+    # which clips over expressing pixels rather than all bins). The floor keeps
+    # near-empty genes from being auto-stretched by the smoother into spurious
+    # "signal".
+    pos = H_mean[valid & np.isfinite(H_mean) & (H_mean > 0)]
+    if pos.size and percentile < 1.0:
+        vmax = float(np.nanpercentile(pos, percentile * 100))
+    elif pos.size:
+        vmax = float(np.nanmax(pos))
+    else:
+        vmax = 0.0
+    vmax = max(vmax, float(color_floor))
+    H_mean = np.where(H_mean > vmax, vmax, H_mean)
+
+    return H_mean, H_counts, xedges, yedges, vmax
+
+
+def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin'):
+    """Expression of one gene across the categories of a .obs column.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Must contain an 'expr' column (log-normalized expression), the
+        `group_by` column, and optionally the `split_by` column.
+    gene : str
+        Gene name (for titles/axis labels).
+    group_by : str
+        Categorical column to group on (x-axis).
+    split_by : str or None
+        Optional second categorical column used for color/legend grouping.
+    style : {'violin', 'box', 'strip'}
+        Plot style. (The 'dotplot' style is handled by create_dotplot.)
+    """
+    if df is None or len(df) == 0 or group_by not in df.columns:
+        return _message_figure("No data to plot for this selection.")
+
+    # Order groups by descending median expression so the most-expressing
+    # categories read left-to-right.
+    order = (
+        df.groupby(group_by, observed=True)['expr']
+        .median()
+        .sort_values(ascending=False)
+        .index.tolist()
+    )
+    order = [str(c) for c in order]
+
+    # Stringify the categorical columns so plotly keeps the explicit order and
+    # treats them as discrete.
+    plot_df = df.copy()
+    plot_df[group_by] = plot_df[group_by].astype(str)
+    color_arg = None
+    if split_by and split_by in plot_df.columns:
+        plot_df[split_by] = plot_df[split_by].astype(str)
+        color_arg = split_by
+
+    common = dict(
+        x=group_by,
+        y='expr',
+        color=color_arg,
+        category_orders={group_by: order},
+        title=f"{gene} expression by {group_by}",
+        labels={'expr': f"{gene} (log-normalized)", group_by: group_by},
+    )
+
+    if style == 'box':
+        fig = px.box(plot_df, points=False, **common)
+    elif style == 'strip':
+        fig = px.strip(plot_df, **common)
+    else:  # 'violin' (default)
+        fig = px.violin(plot_df, box=True, points=False, **common)
+
+    fig.update_layout(
+        plot_bgcolor='white',
+        height=600,
+        margin=dict(t=60, l=60, r=20, b=120),
+        xaxis=dict(tickangle=-40),
+    )
+    return fig
+
+
+def create_dotplot(expr_df, genes, group_by):
+    """Scanpy-style dot plot: gene set (rows) x categories (columns).
+
+    Dot size encodes the fraction of cells with detectable expression
+    (expr > 0); dot color encodes the mean expression across ALL cells in the
+    group (the scanpy convention -- mean over all cells, not only expressing
+    ones).
+
+    Parameters
+    ----------
+    expr_df : pandas.DataFrame
+        One column per gene in `genes` (log-normalized expression) plus the
+        `group_by` column.
+    genes : list of str
+        Genes to show (y-axis).
+    group_by : str
+        Categorical column (x-axis).
+    """
+    genes = [g for g in (genes or []) if g in expr_df.columns]
+    if not genes or group_by not in expr_df.columns:
+        return _message_figure("No genes available for the dot plot.")
+
+    records = []
+    grouped = expr_df.groupby(group_by, observed=True)
+    for grp, sub in grouped:
+        for g in genes:
+            col = sub[g].to_numpy()
+            n = col.size
+            frac = float((col > 0).sum()) / n if n else 0.0
+            mean_expr = float(col.mean()) if n else 0.0
+            records.append({
+                group_by: str(grp),
+                'gene': g,
+                'fraction': frac,
+                'mean_expr': mean_expr,
+            })
+
+    dot_df = pd.DataFrame.from_records(records)
+    # Keep the requested gene order top-to-bottom (reverse so the first gene is
+    # at the top of the y-axis).
+    gene_order = list(reversed(genes))
+
+    fig = px.scatter(
+        dot_df,
+        x=group_by,
+        y='gene',
+        size='fraction',
+        color='mean_expr',
+        color_continuous_scale='viridis',
+        size_max=18,
+        category_orders={'gene': gene_order},
+        labels={
+            'fraction': 'Fraction detected',
+            'mean_expr': 'Mean expression',
+            'gene': 'Gene',
+        },
+        title=f"Expression dot plot by {group_by}",
+    )
+    fig.update_layout(
+        plot_bgcolor='white',
+        height=max(400, 60 * len(genes) + 200),
+        margin=dict(t=60, l=120, r=20, b=120),
+        xaxis=dict(tickangle=-40),
+    )
+    return fig
+
+
+def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
+                            bin_size=50, percentile=0.95, smooth_sigma=0,
+                            min_cells=1, color_floor=0.05):
+    """Two genes side-by-side over the same embedding for visual comparison.
+
+    Each panel shows one gene's expression. When `binned` (custom spatial
+    embedding + binning enabled) each panel is a per-bin-mean heatmap computed
+    with the shared _binned_mean helper; otherwise each panel is a per-cell
+    Scattergl colored by expression. The two panels share one color scale (the
+    combined max across both genes) so the comparison is fair.
+
+    Parameters
+    ----------
+    x, y : array-like
+        Embedding coordinates (same for both panels).
+    vals_list : list of array-like
+        Per-cell expression for each of the two genes.
+    names : list of str
+        Gene names (used as subplot titles).
+    embedding : str
+        Embedding name (axis labels / styling).
+    binned : bool
+        Heatmap (True) vs per-cell scatter (False).
+    """
+    if ' vs ' in embedding:
+        x_label, y_label = embedding.split(' vs ')
+    else:
+        x_label = f'{embedding}_1'
+        y_label = f'{embedding}_2'
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=[str(n) for n in names],
+                        horizontal_spacing=0.08)
+
+    if binned:
+        # Compute both bin grids first so the shared color scale spans both.
+        grids = []
+        vmaxes = []
+        for vals in vals_list:
+            H_mean, H_counts, xedges, yedges, vmax = _binned_mean(
+                x, y, vals,
+                bin_size=bin_size, percentile=percentile,
+                smooth_sigma=smooth_sigma, min_cells=min_cells,
+                color_floor=color_floor,
+            )
+            grids.append((H_mean, xedges, yedges))
+            vmaxes.append(vmax)
+        shared_vmax = max(vmaxes) if vmaxes else float(color_floor)
+
+        for idx, (H_mean, xedges, yedges) in enumerate(grids):
+            x_centers = (xedges[:-1] + xedges[1:]) / 2
+            y_centers = (yedges[:-1] + yedges[1:]) / 2
+            fig.add_trace(
+                go.Heatmap(
+                    z=H_mean.T,
+                    x=x_centers,
+                    y=y_centers,
+                    colorscale='viridis',
+                    zmin=0,
+                    zmax=shared_vmax,
+                    hoverongaps=False,
+                    showscale=(idx == 1),  # one shared colorbar on the right
+                    colorbar=dict(title='expr') if idx == 1 else None,
+                ),
+                row=1, col=idx + 1,
+            )
+    else:
+        # Per-cell scatter; share the color scale across panels.
+        finite_max = 0.0
+        for vals in vals_list:
+            arr = np.asarray(vals, dtype=float)
+            if arr.size and np.isfinite(arr).any():
+                finite_max = max(finite_max, float(np.nanmax(arr)))
+        shared_vmax = max(finite_max, float(color_floor))
+
+        for idx, vals in enumerate(vals_list):
+            fig.add_trace(
+                go.Scattergl(
+                    x=x, y=y,
+                    mode='markers',
+                    marker=dict(
+                        size=3,
+                        color=np.asarray(vals, dtype=float),
+                        colorscale='viridis',
+                        cmin=0,
+                        cmax=shared_vmax,
+                        showscale=(idx == 1),
+                        colorbar=dict(title='expr') if idx == 1 else None,
+                    ),
+                    showlegend=False,
+                    hoverinfo='skip',
+                ),
+                row=1, col=idx + 1,
+            )
+
+    is_umap = 'umap' in embedding.lower()
+    for col in (1, 2):
+        fig.update_xaxes(
+            title_text=x_label,
+            showgrid=False, zeroline=False,
+            showticklabels=not is_umap,
+            row=1, col=col,
+        )
+        fig.update_yaxes(
+            title_text=y_label,
+            showgrid=False, zeroline=False,
+            showticklabels=not is_umap,
+            scaleanchor=('x' if col == 1 else 'x2'),
+            scaleratio=1,
+            row=1, col=col,
+        )
+
+    fig.update_layout(
+        plot_bgcolor='white',
+        height=600,
+        margin=dict(t=60, l=60, r=20, b=60),
+    )
     return fig
