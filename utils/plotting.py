@@ -348,6 +348,18 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
     y = np.asarray(y, dtype=float)
     vals = np.asarray(vals, dtype=float)
 
+    # Drop non-finite rows before histogramming: np.histogram2d raises on NaN/inf
+    # coordinates ("autodetected range ... is not finite"), and a NaN value would
+    # poison its bin's weighted sum. Custom-axis columns (QC metrics, subset-defined
+    # scores) legitimately contain NaN, so this path is reachable via the axis picker.
+    finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(vals)
+    x, y, vals = x[finite], y[finite], vals[finite]
+    if x.size == 0:
+        nb = int(bin_size)
+        edges = np.linspace(0.0, 1.0, nb + 1)
+        empty = np.full((nb, nb), np.nan, dtype=float)
+        return empty, np.zeros_like(empty), edges, edges, float(color_floor)
+
     H, xedges, yedges = np.histogram2d(x, y, bins=bin_size, weights=vals)
     H_counts, _, _ = np.histogram2d(x, y, bins=bin_size)
 
@@ -403,10 +415,16 @@ def create_group_expression_plot(df, gene, group_by, split_by=None, style='violi
     if df is None or len(df) == 0 or group_by not in df.columns:
         return _message_figure("No data to plot for this selection.")
 
+    # Drop cells with no group label or no expression value (avoids a stray
+    # 'nan' category from astype(str), matching create_dotplot's behavior).
+    plot_df = df[df[group_by].notna() & df['expr'].notna()].copy()
+    if len(plot_df) == 0:
+        return _message_figure("No data to plot for this selection.")
+
     # Order groups by descending median expression so the most-expressing
     # categories read left-to-right.
     order = (
-        df.groupby(group_by, observed=True)['expr']
+        plot_df.groupby(group_by, observed=True)['expr']
         .median()
         .sort_values(ascending=False)
         .index.tolist()
@@ -415,7 +433,6 @@ def create_group_expression_plot(df, gene, group_by, split_by=None, style='violi
 
     # Stringify the categorical columns so plotly keeps the explicit order and
     # treats them as discrete.
-    plot_df = df.copy()
     plot_df[group_by] = plot_df[group_by].astype(str)
     color_arg = None
     if split_by and split_by in plot_df.columns:
