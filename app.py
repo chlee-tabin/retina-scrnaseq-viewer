@@ -152,11 +152,12 @@ def _detect_cp_target(adata, n_sample=256):
         med = float(np.median(sums))
         if med <= 0:
             return None
-        # CP normalisation => every cell sums to the same target. Use a robust 5-95
-        # percentile band (not raw max/min) so a few outlier cells from an integrated
-        # object don't reject an otherwise-clean CP dataset.
-        lo, hi = np.percentile(sums, [5, 95])
-        if (float(hi) - float(lo)) / med > 0.02:
+        # CP normalisation => (nearly) every cell sums to the same target. Reject when
+        # more than ~2% of cells fall outside +-2% of the median: this tolerates a few
+        # float-noise outlier cells, but catches a minority block normalised to a
+        # different target (e.g. a CPM-contaminated arm) that would inflate Panel A.
+        frac_off = float(np.mean(np.abs(sums - med) > 0.02 * med))
+        if frac_off > 0.02:
             return None
         return med
     except Exception as e:  # noqa: BLE001 - best-effort; omit Panel A on any failure

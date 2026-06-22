@@ -406,7 +406,7 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
      Input('enable-binning', 'value')]
 )
 def toggle_plot_order(embedding, enable_binning):
-    if embedding == 'custom_embedding' and enable_binning and 'enabled' in enable_binning:
+    if embedding == 'custom_embedding' and _on(enable_binning):
         return {'display': 'none'}
     return {'display': 'block'}
 
@@ -415,7 +415,7 @@ def toggle_plot_order(embedding, enable_binning):
     [Input('enable-binning', 'value')]
 )
 def toggle_binning_controls(enable_binning):
-    if enable_binning and 'enabled' in enable_binning:
+    if _on(enable_binning):
         return {'display': 'block'}
     return {'display': 'none'}
 
@@ -576,7 +576,7 @@ def update_group_gene_select(data_store, search_value):
     Input('compare-genes', 'value')
 )
 def toggle_compare_genes(compare_genes):
-    if compare_genes and 'enabled' in compare_genes:
+    if _on(compare_genes):
         return {'display': 'block'}
     return {'display': 'none'}
 

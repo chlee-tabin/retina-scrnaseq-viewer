@@ -105,10 +105,12 @@ PR #19). For a gene `g`, a grouping column, and a replicate unit:
     and stays in the same units as Panel B. A near-integrality check additionally
     guards the depth basis; Panel A is **omitted** (per-cell violin only) when `.X` is
     not a clean `log1p(CP)` (e.g. z-scored, scran-pooled) — no raw-count layer needed.
-- **Panel B — per-cell positive-cell violins**: `y = log1p(CP10K)` (the `.X` value)
-  for cells with `X > 0`; one violin per group (`scalemode="width"`); faint jitter
-  overlaid except for groups with > 2000 positive cells; **`n=` = number of positive
-  cells** annotated above each violin.
+- **Panel B — per-cell positive-cell violins**: `y =` the per-cell `.X` log-norm value
+  (`log1p(CP·T)`, same units as Panel A) for cells with `X > 0`; one violin per group
+  (`scalemode="width"`); faint jitter overlaid except for groups with > 2000 positive
+  cells; **`n=` = number of positive cells** annotated above each violin. (With the
+  positive-cells-only gate off, Panel B shows all cells and `n=` is the per-group cell
+  count.)
 - x-axis = `annotation_column` in `annotation_order`; colours from
   `annotation_colors`.
 

@@ -42,8 +42,9 @@ def state_for_dataset(url_search, dataset_id):
 
     The single seam for the stale-state guard: a ``?state=`` from a different dataset
     must not re-apply when the user switches datasets (the URL is never cleared). Every
-    URL-reading restore callback parses through this rather than bare ``parse_url_state``
-    so the guard cannot be forgotten by a new reader.
+    restore callback that reads state for an ALREADY-LOADED dataset parses through this
+    rather than bare ``parse_url_state``; only ``initialize_from_url`` (which SETS the
+    dataset, so it has none to compare against) uses the bare parse, by design.
     """
     state = parse_url_state(url_search)
     if state and state.get('dataset') != dataset_id:
