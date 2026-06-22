@@ -68,8 +68,9 @@ currently unused), plus:
 - **`annotation_colors`** — `{category: hex}`; the **same** colour for a cell type in
   every view. Unmapped categories fall back to a distinct qualitative palette
   (`plotly.express.colors.qualitative.Dark24`, replacing the pale `Set3`).
-- **`replicate_columns`** — columns joined with `|` to form the pseudobulk replicate
-  unit (e.g. `[library, genotype]`).
+- **`replicate_columns`** — columns combined to form the pseudobulk replicate unit
+  (e.g. `[library, genotype]`). Shown as ` × `; the internal key joins them with a
+  non-printing `US` (`\x1f`) separator so a value containing `|` cannot mis-split.
 
 ## Categorical colouring
 

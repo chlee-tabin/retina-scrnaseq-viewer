@@ -33,5 +33,19 @@ def parse_url_state(url_search):
     params = parse_qs(url_search.lstrip('?'))
     if 'state' not in params:
         return None
-    
-    return decode_state(params['state'][0]) 
+
+    return decode_state(params['state'][0])
+
+
+def state_for_dataset(url_search, dataset_id):
+    """Parse shared-URL state, but only when it belongs to ``dataset_id`` (else None).
+
+    The single seam for the stale-state guard: a ``?state=`` from a different dataset
+    must not re-apply when the user switches datasets (the URL is never cleared). Every
+    URL-reading restore callback parses through this rather than bare ``parse_url_state``
+    so the guard cannot be forgotten by a new reader.
+    """
+    state = parse_url_state(url_search)
+    if state and state.get('dataset') != dataset_id:
+        return None
+    return state

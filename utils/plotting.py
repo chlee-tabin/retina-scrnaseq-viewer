@@ -808,12 +808,12 @@ def create_group_expression_figure(
 
     order = _resolve_order(d[group_by], category_order=category_order, by_series=d['expr'])
     pos_index = {g: i for i, g in enumerate(order)}
-    K = len(order)
+    n_groups = len(order)
 
     full_cmap = _resolve_color_map(order, color_map)
 
     def gcolor(g):
-        return full_cmap.get(g, CATEGORICAL_FALLBACK[0])
+        return full_cmap[g]  # _resolve_color_map covers every category in `order`
 
     # Panel A (pseudobulk) needs a replicate, a per-cell depth, AND a known CP
     # normalisation target so raw counts can be reconstructed. norm_target carries the
@@ -821,6 +821,10 @@ def create_group_expression_figure(
     has_cols = ('ncount' in d.columns and 'replicate' in d.columns
                 and d['ncount'].notna().any() and d['replicate'].notna().any())
     draw_panel_a = has_cols and bool(norm_target)
+    # Reason Panel A is omitted DESPITE the data carrying a replicate + depth (so the
+    # user can tell "not recognised" from "no replicate configured"); surfaced below.
+    pb_omit_reason = (".X is not a recognised log1p(CP) normalisation"
+                      if (has_cols and not norm_target) else None)
     if draw_panel_a:
         # Verify raw_i = expm1(X)*nCount/norm_target lands on integers for this gene;
         # if .X was normalised on a depth other than nCount_RNA, omit Panel A rather
@@ -830,6 +834,7 @@ def create_group_expression_figure(
         raw_pos = raw[np.isfinite(raw) & (d['expr'].to_numpy() > 0)]
         if raw_pos.size and float(np.max(np.abs(raw_pos - np.round(raw_pos)))) > 1e-2:
             draw_panel_a = False
+            pb_omit_reason = ".X does not appear normalised on nCount_RNA"
 
     rows = 2 if draw_panel_a else 1
     titles = []
@@ -846,6 +851,7 @@ def create_group_expression_figure(
     if draw_panel_a:
         cells = d[d['ncount'].notna()].copy()
         cells['raw'] = np.expm1(cells['expr'].to_numpy()) * cells['ncount'].to_numpy() / float(norm_target)
+        cells = cells[np.isfinite(cells['raw'])]  # drop any non-finite reconstruction
         grouped = cells.groupby([group_by, 'replicate'], observed=True)
         pb_df = grouped.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
                             n=('expr', 'size')).reset_index()
@@ -922,10 +928,18 @@ def create_group_expression_figure(
                            xref=xr, yref=yr, x=0.5, y=0.5, showarrow=False,
                            font=dict(size=14, color='#888'))
 
+    if not draw_panel_a and pb_omit_reason:
+        # The default "figure" style promises a pseudobulk panel; when it is omitted
+        # for a recognised reason (the data had a replicate but .X is not a clean CP
+        # normalisation), say so rather than silently showing a single panel.
+        fig.add_annotation(text=f"Pseudobulk panel omitted: {pb_omit_reason}",
+                           xref='paper', yref='paper', x=0.5, y=1.0, yanchor='bottom',
+                           showarrow=False, font=dict(size=11, color='#a06000'))
+
     for r in range(1, rows + 1):
         fig.update_xaxes(
-            tickmode='array', tickvals=list(range(K)), ticktext=order,
-            tickangle=-40, range=[-0.6, K - 0.4], showgrid=False, row=r, col=1,
+            tickmode='array', tickvals=list(range(n_groups)), ticktext=order,
+            tickangle=-40, range=[-0.6, n_groups - 0.4], showgrid=False, row=r, col=1,
         )
     fig.update_layout(
         plot_bgcolor='white',

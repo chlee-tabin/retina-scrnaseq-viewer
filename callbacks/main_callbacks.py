@@ -16,7 +16,7 @@ import pandas as pd
 import logging
 from utils.processing import create_metacells, calculate_selection_stats
 from utils.error_handling import handle_callback_error, log_callback_info
-from utils.state import parse_url_state
+from utils.state import state_for_dataset
 import scipy.sparse
 import numpy as np
 import traceback
@@ -48,6 +48,12 @@ def _gene_vector(adata, gene):
     if scipy.sparse.issparse(sub):
         return sub.toarray().flatten()
     return np.asarray(sub).flatten()
+
+
+def _on(value):
+    """True iff a dcc.Checklist value contains the 'enabled' flag. Tolerates a
+    non-list (e.g. a hand-edited ?state=) without raising on the membership test."""
+    return isinstance(value, (list, tuple)) and 'enabled' in value
 
 
 # Internal separator for composite replicate keys: a rare control char that cannot
@@ -210,13 +216,12 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     adata, group_replicate, data_store.get('replicate_columns', []))
                 if rep_series is not None:
                     fig_df['replicate'] = rep_series
-                positive_only = (isinstance(group_positive_only, (list, tuple))
-                                 and 'enabled' in group_positive_only)
+                positive_only = _on(group_positive_only)
                 return create_group_expression_figure(
                     fig_df, group_gene, group_by,
                     color_map=g_cmap, category_order=g_corder,
                     positive_only=positive_only,
-                    norm_target=data_store.get('x_norm_target', 1e4),
+                    norm_target=data_store.get('x_norm_target'),
                 )
 
             # Simple violin / box / strip of one gene across groups.
@@ -255,11 +260,11 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         # heatmap and the useless per-category subplot grid on UMAPs.
         binning_on = (
             embedding == 'custom_embedding'
-            and bool(enable_binning) and 'enabled' in enable_binning
+            and _on(enable_binning)
         )
 
         # ---- Two genes side-by-side (map view, gene-expression color) ----
-        compare_on = isinstance(compare_genes, (list, tuple)) and 'enabled' in compare_genes
+        compare_on = _on(compare_genes)
         if color_by == 'gene_expression' and compare_on and gene and gene2:
             missing = [g for g in (gene, gene2) if g not in adata.var_names]
             if missing:
@@ -267,7 +272,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     f"Gene(s) not found in this dataset: {', '.join(missing)}. "
                     "Check the name/casing."
                 )
-            smooth_on = bool(enable_smoothing) and 'enabled' in enable_smoothing
+            smooth_on = _on(enable_smoothing)
             smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
             return create_dual_gene_figure(
                 np.asarray(x), np.asarray(y),
@@ -281,8 +286,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 min_cells=data_store.get('min_cells_per_bin', 1),
                 color_floor=data_store.get('color_floor', 0.05),
                 bin_stat=(bin_stat or 'mean'),
-                shared_scale=(isinstance(compare_shared_scale, (list, tuple))
-                              and 'enabled' in compare_shared_scale),
+                shared_scale=_on(compare_shared_scale),
             )
 
         # Handle gene expression
@@ -321,7 +325,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         # Create the plot. Only the custom spatial embedding is ever binned;
         # all other embeddings always use the per-cell scatter (F1).
         if binning_on:
-            smooth_on = bool(enable_smoothing) and 'enabled' in enable_smoothing
+            smooth_on = _on(enable_smoothing)
             smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
             min_cells = data_store.get('min_cells_per_bin', 1)
             fig = create_binned_plot(
@@ -379,11 +383,10 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
     
     # Check if we should initialize from URL state
     if url_search:
-        state = parse_url_state(url_search)
-        # Only honour shared custom-axis state when it belongs to the loaded dataset
-        # (a stale ?state= from another dataset must not re-apply on a switch).
-        if (state and state.get('embedding') == 'custom_embedding'
-                and state.get('dataset') == data_store.get('dataset_id')):
+        # state_for_dataset returns the shared state only when it belongs to the loaded
+        # dataset (a stale ?state= from another dataset must not re-apply on a switch).
+        state = state_for_dataset(url_search, data_store.get('dataset_id'))
+        if state and state.get('embedding') == 'custom_embedding':
             custom_x = state.get('custom_x')
             custom_y = state.get('custom_y')
             # Only set values if they exist in the options
@@ -469,9 +472,7 @@ def populate_group_controls(data_store, url_search):
     # A shared URL may carry expression-by-group state; apply it only when the loaded
     # dataset matches the one in the URL, so a later manual dataset switch is not
     # silently re-overridden by stale shared state.
-    state = parse_url_state(url_search) if url_search else None
-    if not state or state.get('dataset') != data_store.get('dataset_id'):
-        state = {}
+    state = (state_for_dataset(url_search, data_store.get('dataset_id')) if url_search else None) or {}
 
     column_types = data_store.get('column_types', {}) or {}
     categorical_cols = [c for c, t in column_types.items() if t == 'categorical']

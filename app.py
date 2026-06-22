@@ -36,6 +36,7 @@ from callbacks.status_callbacks import *
 from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding
 from utils.config import load_config
 from utils.error_handling import handle_callback_error, log_callback_info
+from utils.state import state_for_dataset
 from components.status_bar import create_status_bar
 from utils.plotting import create_scatter_plot, create_metacell_plot
 
@@ -149,8 +150,13 @@ def _detect_cp_target(adata, n_sample=256):
         if sums.size < max(5, 0.5 * len(idx)):
             return None
         med = float(np.median(sums))
-        # CP normalisation => every cell sums to the same target; require tight spread.
-        if med <= 0 or (float(np.max(sums)) - float(np.min(sums))) / med > 0.02:
+        if med <= 0:
+            return None
+        # CP normalisation => every cell sums to the same target. Use a robust 5-95
+        # percentile band (not raw max/min) so a few outlier cells from an integrated
+        # object don't reject an otherwise-clean CP dataset.
+        lo, hi = np.percentile(sums, [5, 95])
+        if (float(hi) - float(lo)) / med > 0.02:
             return None
         return med
     except Exception as e:  # noqa: BLE001 - best-effort; omit Panel A on any failure
@@ -322,7 +328,7 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         column_types = {}
         for col in adata.obs.columns:
             s = adata.obs[col]
-            is_small_int = pd.api.types.is_integer_dtype(s) and s.nunique() <= 50
+            is_small_int = pd.api.types.is_integer_dtype(s) and len(s.unique()) <= 50
             if pd.api.types.is_numeric_dtype(s) and not is_small_int:
                 column_types[col] = 'numeric'
             else:
@@ -370,12 +376,9 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             {'label': emb, 'value': emb} for emb in available_embeddings
         ]
         
-        # Check URL state if available. Apply it only when the loaded dataset matches
-        # the one in the shared link, so a later manual dataset switch is not silently
-        # re-overridden by a stale ?state= (which is never cleared from the URL).
-        state = parse_url_state(url_search) if url_search else None
-        if state and state.get('dataset') != dataset_id:
-            state = None
+        # Apply shared-URL state only when it belongs to the loaded dataset; the
+        # state_for_dataset seam centralises this stale-state guard for all URL readers.
+        state = state_for_dataset(url_search, dataset_id) if url_search else None
         url_color = state.get('color') if state else None
         url_gene = state.get('gene') if state else None
         
