@@ -125,6 +125,38 @@ def create_metacells(x, y, values=None, n_bins=50):
         return H_values, xedges, yedges
     return H, xedges, yedges
 
+
+def _detect_cp_target(adata, n_sample=256):
+    """Detect the counts-per-X normalisation target of a log1p-normalised ``.X``.
+
+    For CP-normalised data every cell's ``expm1(.X)`` sums to the same target (1e4 for
+    CP10K, 1e6 for CPM). Sample cells, sum ``expm1`` across genes, and return the
+    median when the sums are tightly clustered; return None otherwise (raw counts,
+    z-scored, scran-pooled, or otherwise not a clean log1p(CP)) so the pseudobulk panel
+    is omitted rather than reconstructed from an unknown normalisation.
+    """
+    try:
+        n = adata.n_obs
+        if n == 0:
+            return None
+        idx = np.unique(np.linspace(0, n - 1, min(n_sample, n)).astype(int))
+        X = adata.X[idx]
+        if scipy.sparse.issparse(X):
+            sums = np.asarray(np.expm1(X.toarray()).sum(axis=1)).ravel()
+        else:
+            sums = np.expm1(np.asarray(X)).sum(axis=1).ravel()
+        sums = sums[np.isfinite(sums) & (sums > 0)]
+        if sums.size < max(5, 0.5 * len(idx)):
+            return None
+        med = float(np.median(sums))
+        # CP normalisation => every cell sums to the same target; require tight spread.
+        if med <= 0 or (float(np.max(sums)) - float(np.min(sums))) / med > 0.02:
+            return None
+        return med
+    except Exception as e:  # noqa: BLE001 - best-effort; omit Panel A on any failure
+        logger.warning(f"CP-target detection failed ({e}); pseudobulk panel omitted")
+        return None
+
 # Main layout with fixed sidebar
 app.layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
@@ -283,10 +315,15 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         dataset = config['datasets'][dataset_id]
         adata = load_adata(dataset['file_path'])
         
-        # Determine column types
+        # Determine column types. A low-cardinality INTEGER column (cluster ids, Phase
+        # codes) is treated as CATEGORICAL -- matching _is_categorical_series in
+        # main_callbacks -- so such an annotation is offered in the group-by / colour
+        # controls instead of being mis-handled as a continuous axis.
         column_types = {}
         for col in adata.obs.columns:
-            if pd.api.types.is_numeric_dtype(adata.obs[col]):
+            s = adata.obs[col]
+            is_small_int = pd.api.types.is_integer_dtype(s) and s.nunique() <= 50
+            if pd.api.types.is_numeric_dtype(s) and not is_small_int:
                 column_types[col] = 'numeric'
             else:
                 column_types[col] = 'categorical'
@@ -320,6 +357,10 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             'annotation_order': dataset.get('annotation_order', []),
             'annotation_colors': dataset.get('annotation_colors', {}),
             'replicate_columns': dataset.get('replicate_columns', []),
+            # CP-normalisation target of .X (1e4=CP10K, 1e6=CPM, ...) so the group
+            # "Figure" reconstructs raw counts for ANY log1p(CP*) normalisation; None
+            # when .X is not a clean log1p(CP) (then Panel A is omitted).
+            'x_norm_target': _detect_cp_target(adata),
         }
         
         # Create embedding options with custom embedding as first option
@@ -329,8 +370,12 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             {'label': emb, 'value': emb} for emb in available_embeddings
         ]
         
-        # Check URL state if available
+        # Check URL state if available. Apply it only when the loaded dataset matches
+        # the one in the shared link, so a later manual dataset switch is not silently
+        # re-overridden by a stale ?state= (which is never cleared from the URL).
         state = parse_url_state(url_search) if url_search else None
+        if state and state.get('dataset') != dataset_id:
+            state = None
         url_color = state.get('color') if state else None
         url_gene = state.get('gene') if state else None
         

@@ -59,7 +59,8 @@ show only for `figure`, the module selector only for `dotplot`.
 
 Per dataset (all optional unless noted): `title`, `description`, `file_path`
 (required), `default_gene`, `default_embedding`, `smooth_sigma`,
-`min_cells_per_bin`, `color_floor`, `gene_modules`, plus:
+`min_cells_per_bin`, `color_floor`, `gene_modules`, `deg_results_path` (reserved,
+currently unused), plus:
 
 - **`annotation_column`** — the default categorical column for grouping/colour.
 - **`annotation_order`** — biological (maturation) order; applied to the scatter
@@ -82,8 +83,9 @@ the Dark24 fallback (nothing renders colourless).
 Two panels over the same embedding, one gene each.
 
 - **Independent colour scales by default**: each panel's colorbar maximum is its own
-  gene's max, so a sparse gene (e.g. CYP26C1, ~0.5 % positive) is **not** flattened
-  by a strong one (e.g. FGF8). `compare-shared-scale` switches to one absolute scale.
+  gene's max, so a sparse gene (e.g. CYP26C1, well under 1 % positive — 0.5 % in
+  chick_full, 0.9 % in chick_rpc) is **not** flattened by a strong one (e.g. FGF8).
+  `compare-shared-scale` switches to one absolute scale.
 - Expressing cells are drawn **last** (sorted ascending by expression) so a sparse
   gene's positive cells are not hidden under the many non-expressing cells.
 
@@ -93,14 +95,15 @@ Plotly reproduction of `scripts/viewer_full_chick/16b_npy_figure.R` (analysis re
 PR #19). For a gene `g`, a grouping column, and a replicate unit:
 
 - **Panel A — pseudobulk per (group × replicate)**: one dot per replicate;
-  `y = log1p( Σ raw / Σ depth × 1e4 )`; dot **size increases with n cells**; grey
+  `y = log1p( Σ raw / Σ depth × T )`; dot **size increases with n cells**; grey
   crossbar = mean across replicates; replicates with **< 10 cells dropped**.
-  - Raw counts are reconstructed from the log-normalised `.X` and the per-cell depth:
-    `raw_i = expm1(X_i) · nCount_i / 1e4`. This is exact **only when `.X` is
-    `log1p(CP10K)` normalised on `nCount_RNA`** (verified integer-exact on chick_full /
-    chick_rpc). Panel A runs a near-integrality check on the reconstruction and is
-    **omitted** (per-cell violin only) for any dataset whose `.X` fails it — so no
-    raw-count layer is required for conforming datasets.
+  - `T` is the dataset's counts-per-X normalisation target, **detected at load** from
+    the per-cell `expm1(.X)` sum (1e4 for CP10K, 1e6 for CPM). Raw counts are
+    reconstructed as `raw_i = expm1(X_i) · nCount_i / T` (verified integer-exact on
+    chick_full / chick_rpc), so Panel A is correct for any `log1p(CP*)` normalisation
+    and stays in the same units as Panel B. A near-integrality check additionally
+    guards the depth basis; Panel A is **omitted** (per-cell violin only) when `.X` is
+    not a clean `log1p(CP)` (e.g. z-scored, scran-pooled) — no raw-count layer needed.
 - **Panel B — per-cell positive-cell violins**: `y = log1p(CP10K)` (the `.X` value)
   for cells with `X > 0`; one violin per group (`scalemode="width"`); faint jitter
   overlaid except for groups with > 2000 positive cells; **`n=` = number of positive
@@ -141,9 +144,12 @@ callback, and each reads the same URL state):
   (`prevent_initial_call='initial_duplicate'`) so a pasted link works.
 - `app.update_data` → embedding, colour, gene (triggered by the restored dataset).
 - `main_callbacks.update_custom_embedding_controls` → custom_x / custom_y.
-- `main_callbacks.populate_group_controls` → all group controls, **gated** on the
-  URL's `dataset` matching the loaded `dataset_id` (so a later manual dataset switch
-  is not re-overridden by stale shared state).
+- `main_callbacks.populate_group_controls` → all group controls.
+
+Every URL-reading owner (`update_data`, `update_custom_embedding_controls`,
+`populate_group_controls`) applies the shared state **only when the URL's `dataset`
+matches the loaded `dataset_id`**, so a later manual dataset switch is not
+re-overridden by the stale `?state=` (which is never cleared from the URL).
 
 The earlier duplicate `initialize_from_url` in `app.py` was removed so no two
 callbacks write the same control value.

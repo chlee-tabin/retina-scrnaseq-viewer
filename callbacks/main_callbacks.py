@@ -50,27 +50,56 @@ def _gene_vector(adata, gene):
     return np.asarray(sub).flatten()
 
 
+# Internal separator for composite replicate keys: a rare control char that cannot
+# appear in obs string values, so a value that itself contains '|' never mis-splits.
+_REP_SEP = '\x1f'
+
+
+def _replicate_key(cols):
+    """Build the dropdown value for a multi-column replicate unit (collision-safe)."""
+    return _REP_SEP.join(cols)
+
+
 def _replicate_series(adata, replicate_value, replicate_columns):
     """Resolve the per-cell pseudobulk replicate label for the group figure.
 
-    `replicate_value` is the dropdown choice: a single obs column, a 'col1|col2'
-    composite (joined per cell), or None -> fall back to the dataset's configured
-    `replicate_columns` composite, then a single configured column. Returns a numpy
-    array of string labels, or None if no usable replicate column exists.
+    `replicate_value` is the dropdown choice: a single obs column, a composite key
+    built by `_replicate_key` (several columns), or None -> fall back to the dataset's
+    configured `replicate_columns` composite, then a single configured column. A
+    requested composite must resolve to ALL of its columns: if any is missing from obs
+    the replicate is treated as unavailable (return None -> Panel A omitted) rather
+    than silently narrowing to a coarser unit. Returns a numpy array of string labels,
+    or None if no usable replicate exists.
     """
     obs = adata.obs
+
+    def join(cols):
+        return obs[cols].astype(str).agg(_REP_SEP.join, axis=1).to_numpy()
+
     if replicate_value and replicate_value in obs.columns:
         return obs[replicate_value].astype(str).to_numpy()
-    if replicate_value and '|' in replicate_value:
-        cols = [c for c in replicate_value.split('|') if c in obs.columns]
-        if cols:
-            return obs[cols].astype(str).agg('|'.join, axis=1).to_numpy()
-    cols = [c for c in (replicate_columns or []) if c in obs.columns]
-    if len(cols) >= 2:
-        return obs[cols].astype(str).agg('|'.join, axis=1).to_numpy()
-    if len(cols) == 1:
-        return obs[cols[0]].astype(str).to_numpy()
+    if replicate_value and _REP_SEP in replicate_value:
+        want = replicate_value.split(_REP_SEP)
+        present = [c for c in want if c in obs.columns]
+        return join(present) if present and len(present) == len(want) else None
+
+    configured = list(replicate_columns or [])
+    present = [c for c in configured if c in obs.columns]
+    if len(configured) >= 2:
+        return join(present) if len(present) == len(configured) else None
+    if len(configured) == 1:
+        return obs[present[0]].astype(str).to_numpy() if present else None
     return None
+
+
+def _annotation_style(data_store, column):
+    """(color_map, category_order) for a categorical `column`: the configured per-type
+    colours + order when `column` is the dataset's annotation column, else (None,
+    None) so the default palette/order applies."""
+    if column and column == data_store.get('annotation_column'):
+        return (data_store.get('annotation_colors') or {},
+                data_store.get('annotation_order') or [])
+    return None, None
 
 
 def _is_categorical_series(series):
@@ -138,9 +167,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
 
             # Consistent per-type colour + biological order, applied when grouping on
             # the dataset's configured annotation column (else default palette/order).
-            ann_col = data_store.get('annotation_column')
-            g_cmap = (data_store.get('annotation_colors') or {}) if group_by == ann_col else None
-            g_corder = (data_store.get('annotation_order') or []) if group_by == ann_col else None
+            g_cmap, g_corder = _annotation_style(data_store, group_by)
 
             # Dot plot of a gene set (module) x groups. A module selection is
             # self-sufficient (no single gene required); without a module, fall
@@ -183,11 +210,13 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     adata, group_replicate, data_store.get('replicate_columns', []))
                 if rep_series is not None:
                     fig_df['replicate'] = rep_series
-                positive_only = bool(group_positive_only) and 'enabled' in group_positive_only
+                positive_only = (isinstance(group_positive_only, (list, tuple))
+                                 and 'enabled' in group_positive_only)
                 return create_group_expression_figure(
                     fig_df, group_gene, group_by,
                     color_map=g_cmap, category_order=g_corder,
                     positive_only=positive_only,
+                    norm_target=data_store.get('x_norm_target', 1e4),
                 )
 
             # Simple violin / box / strip of one gene across groups.
@@ -230,7 +259,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         )
 
         # ---- Two genes side-by-side (map view, gene-expression color) ----
-        compare_on = bool(compare_genes) and 'enabled' in compare_genes
+        compare_on = isinstance(compare_genes, (list, tuple)) and 'enabled' in compare_genes
         if color_by == 'gene_expression' and compare_on and gene and gene2:
             missing = [g for g in (gene, gene2) if g not in adata.var_names]
             if missing:
@@ -252,7 +281,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 min_cells=data_store.get('min_cells_per_bin', 1),
                 color_floor=data_store.get('color_floor', 0.05),
                 bin_stat=(bin_stat or 'mean'),
-                shared_scale=bool(compare_shared_scale) and 'enabled' in compare_shared_scale,
+                shared_scale=(isinstance(compare_shared_scale, (list, tuple))
+                              and 'enabled' in compare_shared_scale),
             )
 
         # Handle gene expression
@@ -305,9 +335,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 bin_stat=(bin_stat or 'mean'),
             )
         else:
-            ann_col = data_store.get('annotation_column')
-            s_cmap = (data_store.get('annotation_colors') or {}) if color_by == ann_col else None
-            s_corder = (data_store.get('annotation_order') or []) if color_by == ann_col else None
+            s_cmap, s_corder = _annotation_style(data_store, color_by)
             fig = create_scatter_plot(
                 df, embedding, color_by,
                 treat_as_categorical=treat_as_categorical,
@@ -319,7 +347,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
     except Exception as e:
         logger.error(f"Error updating plot: {str(e)}")
         logger.error(f"Traceback:\n{traceback.format_exc()}")
-        return {}
+        return _message_figure("Internal error rendering this view -- see server logs.")
 
 @callback(
     [Output('custom-x-select', 'options'),
@@ -352,7 +380,10 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
     # Check if we should initialize from URL state
     if url_search:
         state = parse_url_state(url_search)
-        if state and state.get('embedding') == 'custom_embedding':
+        # Only honour shared custom-axis state when it belongs to the loaded dataset
+        # (a stale ?state= from another dataset must not re-apply on a switch).
+        if (state and state.get('embedding') == 'custom_embedding'
+                and state.get('dataset') == data_store.get('dataset_id')):
             custom_x = state.get('custom_x')
             custom_y = state.get('custom_y')
             # Only set values if they exist in the options
@@ -484,18 +515,22 @@ def populate_group_controls(data_store, url_search):
     replicate_options = []
     default_replicate = None
     if len(replicate_columns) >= 2:
-        composite = '|'.join(replicate_columns)
+        composite = _replicate_key(replicate_columns)
         replicate_options.append(
             {'label': ' × '.join(replicate_columns) + ' (demux replicate)', 'value': composite})
         default_replicate = composite
     replicate_options += [{'label': c, 'value': c} for c in categorical_cols]
     valid_replicate = {opt['value'] for opt in replicate_options}
+    # Default replicate: shared-URL value, then the configured composite, then a known
+    # sample/batch column, else None (Panel A omitted) rather than an arbitrary first
+    # categorical column (which could be a barcode/cluster axis).
+    SAMPLE_HINTS = ('library', 'orig.ident', 'sample', 'batch', 'donor', 'genotype')
     if state.get('group_replicate') in valid_replicate:
         replicate_value = state['group_replicate']
     elif default_replicate is not None:
         replicate_value = default_replicate
     else:
-        replicate_value = (replicate_columns or categorical_cols or [None])[0]
+        replicate_value = next((c for c in categorical_cols if c.lower() in SAMPLE_HINTS), None)
 
     # Group-view gene: shared-URL value, else the dataset's default gene. (Options are
     # also kept in sync by update_group_gene_select.)

@@ -53,10 +53,12 @@ def _resolve_order(values, category_order=None, by_series=None):
 
 
 def _resolve_color_map(order, color_map=None):
-    """Resolve a full {category -> colour} map over `order`, replicating plotly's own
-    fallback rule (advance the palette by the number of already-assigned categories) so
-    the scatter, violin and figure colour an unmapped category identically -- even under
-    a partial `annotation_colors` map.
+    """Resolve a full {category -> colour} map over `order`: keep the configured
+    `color_map` colours and assign each unmapped category a deterministic fallback
+    (advancing the palette by the number already assigned) so the scatter, violin and
+    figure all colour an unmapped category identically -- even under a partial
+    `annotation_colors`. Every view is passed this FULL map (no color_discrete_sequence),
+    so plotly never applies its own fallback.
     """
     full = dict(color_map or {})
     for cat in (order or []):
@@ -632,8 +634,9 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
     Each panel shows one gene's expression. When `binned` (custom spatial
     embedding + binning enabled) each panel is a per-bin-mean heatmap computed
     with the shared _binned_mean helper; otherwise each panel is a per-cell
-    Scattergl colored by expression. The two panels share one color scale (the
-    combined max across both genes) so the comparison is fair.
+    Scattergl colored by expression. By default each gene gets its OWN colour scale
+    (so a sparse gene like CYP26C1 is not flattened by a strong one like FGF8); pass
+    shared_scale=True to put both panels on one absolute scale.
 
     Parameters
     ----------
@@ -714,7 +717,7 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
             # Draw expressing cells LAST (on top) so a sparse gene's few positive
             # cells are not hidden under the many non-expressing cells.
             order = np.argsort(v, kind='stable')
-            cb_title = 'expression' if shared_scale else str(names[idx])
+            cb_title = _dual_colorbar_title(names[idx], shared_scale, is_pct=False)
             fig.add_trace(
                 go.Scattergl(
                     x=x[order], y=y[order],
@@ -762,6 +765,7 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
 def create_group_expression_figure(
     df, gene, group_by, *, color_map=None, category_order=None,
     positive_only=True, min_cells_pseudobulk=10, jitter_skip_threshold=2000,
+    norm_target=1e4,
 ):
     """NPY-style two-panel expression figure for one gene across cell groups.
 
@@ -770,18 +774,15 @@ def create_group_expression_figure(
     Parameters
     ----------
     df : pandas.DataFrame
-        One row per cell. Required column 'expr' = per-cell log1p(CP10K) (the h5ad
-        .X). Optional 'ncount' (= nCount_RNA, the per-cell library size) and
-        'replicate' enable Panel A; without them only the per-cell violin panel is
-        drawn. Plus the `group_by` categorical column.
-    gene : str
-        Gene name (titles / axis labels).
-    group_by : str
-        Categorical column for the x-axis (e.g. cell type).
-    color_map : dict or None
-        {category -> hex} so each group keeps its dataset-wide colour.
-    category_order : list or None
-        Explicit left-to-right category order (e.g. maturation order).
+        One row per cell. Required column 'expr' = per-cell log1p(CP_norm_target)
+        (the h5ad .X). Optional 'ncount' (= nCount_RNA, the per-cell library size)
+        and 'replicate' enable Panel A; without them only the per-cell violin panel
+        is drawn. Plus the `group_by` categorical column.
+    gene, group_by : str
+        Gene name (titles/axis); categorical column for the x-axis (e.g. cell type).
+    color_map, category_order : dict / list or None
+        Fixed {category -> hex} and explicit left-to-right order (e.g. maturation
+        order), so each group keeps its dataset-wide colour.
     positive_only : bool
         Panel B shows only cells with expr > 0 (gene-positive). Panel A pseudobulk
         always uses every cell in the group (it is depth-normalised).
@@ -790,10 +791,13 @@ def create_group_expression_figure(
     jitter_skip_threshold : int
         Suppress the per-cell jitter overlay for groups with more positive cells
         than this (keeps the violin readable for the big progenitor classes).
-
-    Panel A pseudobulk = log1p( sum(raw) / sum(depth) * 1e4 ) per (group x
-    replicate), with raw_i = expm1(expr_i) * ncount_i / 1e4 reconstructed exactly
-    from the log-normalised .X plus the per-cell depth.
+    norm_target : float or None
+        The counts-per-X normalisation target of .X (1e4 for CP10K, 1e6 for CPM),
+        detected per dataset at load. Panel A reconstructs raw counts as
+        raw_i = expm1(expr_i) * ncount_i / norm_target and plots
+        log1p( sum(raw)/sum(depth) * norm_target ) -- the SAME log1p(CP) units as
+        Panel B. If None (e.g. .X is z-scored / not a clean log1p(CP)), Panel A is
+        omitted rather than computed from an unknown normalisation.
     """
     if df is None or len(df) == 0 or group_by not in df.columns:
         return _message_figure("No data to plot for this selection.")
@@ -811,45 +815,48 @@ def create_group_expression_figure(
     def gcolor(g):
         return full_cmap.get(g, CATEGORICAL_FALLBACK[0])
 
-    has_pb = ('ncount' in d.columns and 'replicate' in d.columns
-              and d['ncount'].notna().any() and d['replicate'].notna().any())
-    if has_pb:
-        # Panel A reconstructs raw counts as expm1(X)*nCount/1e4, valid only when .X is
-        # log1p(CP10K) normalised on nCount_RNA. Verify the reconstructed values are
-        # near-integer for this gene; if a dataset normalised .X differently, omit
-        # Panel A rather than draw unverified pseudobulk.
-        _nc = pd.to_numeric(d['ncount'], errors='coerce').to_numpy()
-        _raw = np.expm1(d['expr'].to_numpy()) * _nc / 1e4
-        _pos = _raw[np.isfinite(_raw) & (d['expr'].to_numpy() > 0)]
-        if _pos.size and float(np.max(np.abs(_pos - np.round(_pos)))) > 1e-2:
-            has_pb = False
+    # Panel A (pseudobulk) needs a replicate, a per-cell depth, AND a known CP
+    # normalisation target so raw counts can be reconstructed. norm_target carries the
+    # detected value (None when .X is not a clean log1p(CP*), e.g. z-scored).
+    has_cols = ('ncount' in d.columns and 'replicate' in d.columns
+                and d['ncount'].notna().any() and d['replicate'].notna().any())
+    draw_panel_a = has_cols and bool(norm_target)
+    if draw_panel_a:
+        # Verify raw_i = expm1(X)*nCount/norm_target lands on integers for this gene;
+        # if .X was normalised on a depth other than nCount_RNA, omit Panel A rather
+        # than draw unverified pseudobulk.
+        nc = pd.to_numeric(d['ncount'], errors='coerce').to_numpy()
+        raw = np.expm1(d['expr'].to_numpy()) * nc / float(norm_target)
+        raw_pos = raw[np.isfinite(raw) & (d['expr'].to_numpy() > 0)]
+        if raw_pos.size and float(np.max(np.abs(raw_pos - np.round(raw_pos)))) > 1e-2:
+            draw_panel_a = False
 
-    rows = 2 if has_pb else 1
+    rows = 2 if draw_panel_a else 1
     titles = []
-    if has_pb:
+    if draw_panel_a:
         titles.append(f"Pseudobulk {gene} per population x replicate (dot size increases with n cells)")
     pos_label = f"{gene}+ cells only" if positive_only else "all cells"
     titles.append(f"Per-cell {gene} ({pos_label}), by population")
 
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.10,
                         subplot_titles=titles)
-    row_b = 2 if has_pb else 1
+    row_b = 2 if draw_panel_a else 1
 
-    # ---- Panel A: pseudobulk per (group x replicate), dot size = n cells ----
-    if has_pb:
-        a = d[d['ncount'].notna()].copy()
-        a['raw'] = np.expm1(a['expr'].to_numpy()) * a['ncount'].to_numpy() / 1e4
-        grp = a.groupby([group_by, 'replicate'], observed=True)
-        A = grp.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
-                    n=('expr', 'size')).reset_index()
-        A = A[(A['depth'] > 0) & (A['n'] >= int(min_cells_pseudobulk))].copy()
-        A['pb'] = np.log1p(A['raw_sum'] / A['depth'] * 1e4)
-        n_ref = max(1, int(A['n'].max())) if len(A) else 1
+    # ---- Panel A: pseudobulk per (group x replicate); dot size grows with n cells ----
+    if draw_panel_a:
+        cells = d[d['ncount'].notna()].copy()
+        cells['raw'] = np.expm1(cells['expr'].to_numpy()) * cells['ncount'].to_numpy() / float(norm_target)
+        grouped = cells.groupby([group_by, 'replicate'], observed=True)
+        pb_df = grouped.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
+                            n=('expr', 'size')).reset_index()
+        pb_df = pb_df[(pb_df['depth'] > 0) & (pb_df['n'] >= int(min_cells_pseudobulk))].copy()
+        pb_df['pb'] = np.log1p(pb_df['raw_sum'] / pb_df['depth'] * float(norm_target))
+        n_ref = max(1, int(pb_df['n'].max())) if len(pb_df) else 1
         # diameter grows with sqrt(n); +6px floor keeps small replicates visible
         # (so size increases with n but is not strictly area-proportional).
-        A['px'] = 6.0 + 18.0 * np.sqrt(A['n'] / n_ref)
+        pb_df['px'] = 6.0 + 18.0 * np.sqrt(pb_df['n'] / n_ref)
         for g in order:
-            sub = A[A[group_by] == g]
+            sub = pb_df[pb_df[group_by] == g]
             if not len(sub):
                 continue
             i = pos_index[g]
@@ -870,17 +877,18 @@ def create_group_expression_figure(
                 showlegend=False,
                 hovertemplate=f"{g}<br>mean across replicates={m:.3f}<extra></extra>",
             ), row=1, col=1)
-        fig.update_yaxes(title_text=f"Pseudobulk {gene}<br>log1p(CP10K)", row=1, col=1)
+        cp_label = "log1p(CP10K)" if abs(float(norm_target) - 1e4) < 1.0 else f"log1p(CP/{float(norm_target):g})"
+        fig.update_yaxes(title_text=f"Pseudobulk {gene}<br>{cp_label}", row=1, col=1)
 
-    # ---- Panel B: per-cell log1p(CP10K) violins of (positive) cells ----
-    b = d[d['expr'] > 0].copy() if positive_only else d.copy()
-    if len(b) == 0 and not has_pb:
+    # ---- Panel B: per-cell violins of (positive) cells ----
+    pos_cells = d[d['expr'] > 0].copy() if positive_only else d.copy()
+    if len(pos_cells) == 0 and not draw_panel_a:
         return _message_figure(f"No {gene}-positive cells to plot for this selection.")
-    n_pos = b.groupby(group_by, observed=True)['expr'].size().to_dict() if len(b) else {}
-    y_top = float(b['expr'].max()) if len(b) else 1.0
+    n_pos = pos_cells.groupby(group_by, observed=True)['expr'].size().to_dict() if len(pos_cells) else {}
+    y_top = float(pos_cells['expr'].max()) if len(pos_cells) else 1.0
     for g in order:
         i = pos_index[g]
-        sub = b[b[group_by] == g]
+        sub = pos_cells[pos_cells[group_by] == g]
         if len(sub):
             fig.add_trace(go.Violin(
                 x=np.full(len(sub), i), y=sub['expr'].to_numpy(),
@@ -905,9 +913,9 @@ def create_group_expression_figure(
             showlegend=False, hoverinfo='skip',
         ), row=row_b, col=1)
     fig.update_yaxes(title_text=f"{gene} (log-norm)<br>{pos_label}", row=row_b, col=1)
-    if len(b) == 0:
-        # has_pb is True here (else we returned above): Panel A is informative but no
-        # cell is positive -- label the empty violin panel instead of leaving it blank.
+    if len(pos_cells) == 0:
+        # draw_panel_a is True here (else we returned above): Panel A is informative
+        # but no cell is positive -- label the empty violin panel instead of blank.
         xr = 'x domain' if row_b == 1 else f'x{row_b} domain'
         yr = 'y domain' if row_b == 1 else f'y{row_b} domain'
         fig.add_annotation(text=f"No {gene}-positive cells in any population",
@@ -922,7 +930,7 @@ def create_group_expression_figure(
     fig.update_layout(
         plot_bgcolor='white',
         violinmode='overlay',
-        height=780 if has_pb else 480,
+        height=780 if draw_panel_a else 480,
         margin=dict(t=60, l=80, r=30, b=140),
     )
     return fig
