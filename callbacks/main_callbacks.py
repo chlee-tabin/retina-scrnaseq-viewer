@@ -8,6 +8,7 @@ from utils.plotting import (
     create_metacell_plot,
     create_binned_plot,
     create_group_expression_plot,
+    create_group_expression_figure,
     create_dotplot,
     create_dual_gene_figure,
 )
@@ -49,6 +50,29 @@ def _gene_vector(adata, gene):
     return np.asarray(sub).flatten()
 
 
+def _replicate_series(adata, replicate_value, replicate_columns):
+    """Resolve the per-cell pseudobulk replicate label for the group figure.
+
+    `replicate_value` is the dropdown choice: a single obs column, a 'col1|col2'
+    composite (joined per cell), or None -> fall back to the dataset's configured
+    `replicate_columns` composite, then a single configured column. Returns a numpy
+    array of string labels, or None if no usable replicate column exists.
+    """
+    obs = adata.obs
+    if replicate_value and replicate_value in obs.columns:
+        return obs[replicate_value].astype(str).to_numpy()
+    if replicate_value and '|' in replicate_value:
+        cols = [c for c in replicate_value.split('|') if c in obs.columns]
+        if cols:
+            return obs[cols].astype(str).agg('|'.join, axis=1).to_numpy()
+    cols = [c for c in (replicate_columns or []) if c in obs.columns]
+    if len(cols) >= 2:
+        return obs[cols].astype(str).agg('|'.join, axis=1).to_numpy()
+    if len(cols) == 1:
+        return obs[cols[0]].astype(str).to_numpy()
+    return None
+
+
 def _is_categorical_series(series):
     """Heuristic used across the viewer: category/object dtype or small-int."""
     return (
@@ -82,7 +106,10 @@ def _is_categorical_series(series):
      Input('gene-module-select', 'value'),
      Input('compare-genes', 'value'),
      Input('gene-select-2', 'value'),
-     Input('bin-stat', 'value')],
+     Input('bin-stat', 'value'),
+     Input('group-positive-only', 'value'),
+     Input('group-replicate-select', 'value'),
+     Input('compare-shared-scale', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
@@ -90,7 +117,8 @@ def _is_categorical_series(series):
 def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_mode,
                 bin_number, percentile, enable_binning, enable_smoothing, selection_data,
                 url_search, plot_type, group_gene, group_by, group_split, group_style,
-                gene_module, compare_genes, gene2, bin_stat):
+                gene_module, compare_genes, gene2, bin_stat,
+                group_positive_only, group_replicate, compare_shared_scale):
     logger.debug("update_plot called with parameters:")
 
     # Initialize treat_as_categorical as False by default
@@ -107,6 +135,12 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         if plot_type == 'group':
             if not group_by:
                 return _message_figure("Select a categorical column to group by.")
+
+            # Consistent per-type colour + biological order, applied when grouping on
+            # the dataset's configured annotation column (else default palette/order).
+            ann_col = data_store.get('annotation_column')
+            g_cmap = (data_store.get('annotation_colors') or {}) if group_by == ann_col else None
+            g_corder = (data_store.get('annotation_order') or []) if group_by == ann_col else None
 
             # Dot plot of a gene set (module) x groups. A module selection is
             # self-sufficient (no single gene required); without a module, fall
@@ -127,9 +161,9 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 expr_data = {g: _gene_vector(adata, g) for g in genes}
                 expr_df = pd.DataFrame(expr_data)
                 expr_df[group_by] = adata.obs[group_by].to_numpy()
-                return create_dotplot(expr_df, genes, group_by)
+                return create_dotplot(expr_df, genes, group_by, category_order=g_corder)
 
-            # Violin / box / strip of one gene across groups.
+            # Gene-based styles (figure / violin / box / strip) need a single gene.
             if not group_gene:
                 return _message_figure("Select a gene to plot expression by group.")
             if group_gene not in adata.var_names:
@@ -137,13 +171,34 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     f"Gene '{group_gene}' not found in this dataset. "
                     "Try a different gene or check the name/casing."
                 )
+
+            # Polished 2-panel figure: pseudobulk per (group x replicate) + positive-
+            # cell log1p violin. Panel A reconstructs raw counts from .X + nCount_RNA.
+            if group_style == 'figure':
+                fig_df = pd.DataFrame({'expr': _gene_vector(adata, group_gene)})
+                fig_df[group_by] = adata.obs[group_by].to_numpy()
+                if 'nCount_RNA' in adata.obs.columns:
+                    fig_df['ncount'] = adata.obs['nCount_RNA'].to_numpy()
+                rep_series = _replicate_series(
+                    adata, group_replicate, data_store.get('replicate_columns', []))
+                if rep_series is not None:
+                    fig_df['replicate'] = rep_series
+                positive_only = bool(group_positive_only) and 'enabled' in group_positive_only
+                return create_group_expression_figure(
+                    fig_df, group_gene, group_by,
+                    color_map=g_cmap, category_order=g_corder,
+                    positive_only=positive_only,
+                )
+
+            # Simple violin / box / strip of one gene across groups.
             df = pd.DataFrame({'expr': _gene_vector(adata, group_gene)})
             df[group_by] = adata.obs[group_by].to_numpy()
             split_col = group_split if (group_split and group_split in adata.obs.columns) else None
             if split_col:
                 df[split_col] = adata.obs[split_col].to_numpy()
             return create_group_expression_plot(
-                df, group_gene, group_by, split_by=split_col, style=group_style
+                df, group_gene, group_by, split_by=split_col, style=group_style,
+                color_map=g_cmap, category_order=g_corder,
             )
 
         # ---- Embedding / spatial map view ----
@@ -196,6 +251,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 smooth_sigma=smooth_sigma,
                 min_cells=data_store.get('min_cells_per_bin', 1),
                 color_floor=data_store.get('color_floor', 0.05),
+                bin_stat=(bin_stat or 'mean'),
+                shared_scale=bool(compare_shared_scale) and 'enabled' in compare_shared_scale,
             )
 
         # Handle gene expression
@@ -248,9 +305,13 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 bin_stat=(bin_stat or 'mean'),
             )
         else:
+            ann_col = data_store.get('annotation_column')
+            s_cmap = (data_store.get('annotation_colors') or {}) if color_by == ann_col else None
+            s_corder = (data_store.get('annotation_order') or []) if color_by == ann_col else None
             fig = create_scatter_plot(
                 df, embedding, color_by,
-                treat_as_categorical=treat_as_categorical
+                treat_as_categorical=treat_as_categorical,
+                color_map=s_cmap, category_order=s_corder,
             )
 
         return fig
@@ -337,52 +398,130 @@ def toggle_plot_type(plot_type):
     return {'display': 'block'}, {'display': 'none'}
 
 
+# ---- Within the group view, reveal only the controls the chosen style uses ----
+@callback(
+    [Output('figure-style-controls', 'style'),
+     Output('module-controls', 'style')],
+    Input('group-style', 'value')
+)
+def toggle_group_style_controls(group_style):
+    fig_style = {'display': 'block'} if group_style == 'figure' else {'display': 'none'}
+    mod_style = {'display': 'block'} if group_style == 'dotplot' else {'display': 'none'}
+    return fig_style, mod_style
+
+
 # ---- F2: populate the group-by / split-by / gene-module dropdowns ----
 @callback(
     [Output('group-by-select', 'options'),
      Output('group-by-select', 'value'),
      Output('group-split-select', 'options'),
      Output('group-split-select', 'value'),
-     Output('gene-module-select', 'options')],
+     Output('gene-module-select', 'options'),
+     Output('gene-module-select', 'value'),
+     Output('group-replicate-select', 'options'),
+     Output('group-replicate-select', 'value'),
+     Output('group-gene-select', 'options', allow_duplicate=True),
+     Output('group-gene-select', 'value'),
+     Output('group-style', 'value', allow_duplicate=True),
+     Output('group-positive-only', 'value', allow_duplicate=True)],
     Input('data-store', 'data'),
+    State('url', 'search'),
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def populate_group_controls(data_store):
+def populate_group_controls(data_store, url_search):
+    empty_split = [{'label': '(none)', 'value': ''}]
     if not data_store:
-        return [], None, [{'label': '(none)', 'value': ''}], '', []
+        return [], None, empty_split, '', [], None, [], None, [], None, 'figure', ['enabled']
+
+    # A shared URL may carry expression-by-group state; apply it only when the loaded
+    # dataset matches the one in the URL, so a later manual dataset switch is not
+    # silently re-overridden by stale shared state.
+    state = parse_url_state(url_search) if url_search else None
+    if not state or state.get('dataset') != data_store.get('dataset_id'):
+        state = {}
 
     column_types = data_store.get('column_types', {}) or {}
     categorical_cols = [c for c, t in column_types.items() if t == 'categorical']
-
     group_options = [{'label': c, 'value': c} for c in categorical_cols]
-    # Default grouping: the refined annotation if present, else the first
-    # categorical column.
-    if 'annotation_refined' in categorical_cols:
+
+    # Default grouping: shared-URL value, else the configured annotation column, else
+    # 'annotation_refined', else the first categorical column.
+    ann_col = data_store.get('annotation_column')
+    if state.get('group_by') in categorical_cols:
+        group_value = state['group_by']
+    elif ann_col in categorical_cols:
+        group_value = ann_col
+    elif 'annotation_refined' in categorical_cols:
         group_value = 'annotation_refined'
     elif categorical_cols:
         group_value = categorical_cols[0]
     else:
         group_value = None
 
-    # Split-by includes a "(none)" option (value '') so a second grouping is
-    # optional.
-    split_options = [{'label': '(none)', 'value': ''}] + group_options
-    split_value = ''
+    # Split-by includes a "(none)" option (value '') so a second grouping is optional.
+    split_options = empty_split + group_options
+    valid_split = {''} | set(categorical_cols)
+    split_value = state['group_split'] if state.get('group_split') in valid_split else ''
 
     gene_modules = data_store.get('gene_modules', {}) or {}
     module_options = [
         {'label': f"{name} ({len(genes)} genes)", 'value': name}
         for name, genes in gene_modules.items()
     ]
+    # Default to the first module so the dot-plot style renders immediately when
+    # chosen (the earlier "not working" was an empty module with no default).
+    if state.get('gene_module') in gene_modules:
+        module_value = state['gene_module']
+    else:
+        module_value = next(iter(gene_modules), None)
 
-    return group_options, group_value, split_options, split_value, module_options
+    # Pseudobulk replicate options: the configured composite (e.g. library x
+    # genotype) first, then each categorical column on its own.
+    replicate_columns = [c for c in (data_store.get('replicate_columns') or [])
+                         if c in categorical_cols]
+    replicate_options = []
+    default_replicate = None
+    if len(replicate_columns) >= 2:
+        composite = '|'.join(replicate_columns)
+        replicate_options.append(
+            {'label': ' × '.join(replicate_columns) + ' (demux replicate)', 'value': composite})
+        default_replicate = composite
+    replicate_options += [{'label': c, 'value': c} for c in categorical_cols]
+    valid_replicate = {opt['value'] for opt in replicate_options}
+    if state.get('group_replicate') in valid_replicate:
+        replicate_value = state['group_replicate']
+    elif default_replicate is not None:
+        replicate_value = default_replicate
+    else:
+        replicate_value = (replicate_columns or categorical_cols or [None])[0]
+
+    # Group-view gene: shared-URL value, else the dataset's default gene. (Options are
+    # also kept in sync by update_group_gene_select.)
+    genes = data_store.get('genes', []) or []
+    gene_options = [{'label': g, 'value': g} for g in sorted(genes)]
+    if state.get('group_gene') in genes:
+        gene_value = state['group_gene']
+    else:
+        default_gene = data_store.get('default_gene')
+        gene_value = default_gene if default_gene in genes else None
+
+    # Style + positive-cell gate: shared-URL values, else the figure defaults.
+    valid_styles = {'figure', 'violin', 'box', 'strip', 'dotplot'}
+    group_style = state['group_style'] if state.get('group_style') in valid_styles else 'figure'
+    positive_only = state.get('group_positive_only')
+    if not isinstance(positive_only, list):
+        positive_only = ['enabled']
+
+    return (group_options, group_value, split_options, split_value,
+            module_options, module_value, replicate_options, replicate_value,
+            gene_options, gene_value, group_style, positive_only)
 
 
 # ---- F2: searchable gene dropdown for the group view (mirrors gene-select) ----
 @callback(
-    Output('group-gene-select', 'options'),
+    Output('group-gene-select', 'options', allow_duplicate=True),
     [Input('data-store', 'data'),
      Input('group-gene-select', 'search_value')],
     prevent_initial_call=True

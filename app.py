@@ -296,6 +296,7 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         
         data_store = {
             'filename': dataset['file_path'],
+            'dataset_id': dataset_id,
             'n_cells': adata.n_obs,
             'embeddings': available_embeddings + ['custom_embedding'],
             'metadata_cols': list(adata.obs.columns),
@@ -311,6 +312,14 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             # absent/empty so datasets without them simply hide the controls.
             'gene_modules': dataset.get('gene_modules', {}),
             'deg_results_path': dataset.get('deg_results_path'),
+            # Default gene (for the group view), categorical display (consistent
+            # per-type colours + biological order), and the pseudobulk replicate
+            # unit -- all optional, all from datasets_config.yml.
+            'default_gene': dataset.get('default_gene'),
+            'annotation_column': dataset.get('annotation_column'),
+            'annotation_order': dataset.get('annotation_order', []),
+            'annotation_colors': dataset.get('annotation_colors', {}),
+            'replicate_columns': dataset.get('replicate_columns', []),
         }
         
         # Create embedding options with custom embedding as first option
@@ -375,57 +384,18 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         logger.error(error_message)
         return None, [], [], None, None, [], error_message, 'custom_embedding'
 
-# Update the initialization callback to be more robust
-@callback(
-    [Output('dataset-select', 'value', allow_duplicate=True),
-     Output('embedding-select', 'value', allow_duplicate=True),
-     Output('color-select', 'value', allow_duplicate=True),
-     Output('viz-mode', 'value', allow_duplicate=True),
-     Output('gene-select', 'value', allow_duplicate=True)],
-    [Input('url', 'search')],
-    [State('dataset-select', 'options'),
-     State('dataset-select', 'value')],
-    prevent_initial_call='initial_duplicate'
-)
-def initialize_from_url(search, dataset_options, current_dataset):
-    if not search:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    
-    try:
-        state = parse_url_state(search)
-        if not state:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        
-        return (
-            state.get('dataset'),
-            state.get('embedding'),
-            state.get('color'),
-            state.get('mode', 'random'),  # 'random' is a valid viz-mode; 'cells' was not
-            state.get('gene')
-        )
-    except Exception as e:
-        logger.error(f"Error initializing from URL: {str(e)}")
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+# NOTE: restoring controls from a shared URL is handled solely by
+# callbacks/url_callbacks.initialize_from_url (which sets the dataset + the global
+# controls) together with update_data, update_custom_embedding_controls and
+# populate_group_controls -- each reads the same URL state for the controls it owns.
+# The earlier duplicate restore callback that lived here was removed so that no two
+# callbacks write the same control values (which raced and dropped the new
+# expression-by-group / figure / two-gene state).
 
-# Callback to handle cell selection
-@callback(
-    [Output('selection-store', 'data'),
-     Output('selection-info', 'children')],
-    Input('main-plot', 'selectedData'),
-    State('data-store', 'data')
-)
-def update_selection(selected_data, data_store):
-    if not selected_data or not data_store:
-        return None, "No cells selected"
-    
-    points = selected_data.get('points', [])
-    n_selected = len(points)
-    
-    selection_data = {
-        'indices': [p['pointIndex'] for p in points] if points else []
-    }
-    
-    return selection_data, f"Selected {n_selected} cells"
+# NOTE: cell-selection handling (selection-store / selection-info, driven by
+# main-plot.selectedData) lives solely in callbacks/selection_callbacks.py. A
+# duplicate copy here registered a second writer for the same two outputs on the
+# same input; it was removed so there is one authoritative selection callback.
 
 # NOTE: the main-plot figure callback lives in callbacks/main_callbacks.py
 # (update_plot there handles custom embeddings, gene-expression coloring, plot

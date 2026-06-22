@@ -9,71 +9,52 @@ from utils.state import create_share_url, parse_url_state, encode_state
 
 logger = logging.getLogger(__name__)
 
+# Restore controls from a shared URL. This callback owns only the controls no other
+# callback restores: it sets the dataset (which triggers update_data, the url-aware
+# owner of embedding/colour/gene), plus the global view controls. The custom axes are
+# restored by update_custom_embedding_controls and every expression-by-group control
+# by populate_group_controls -- each reads the same URL state. prevent_initial_call=
+# 'initial_duplicate' lets this fire on the very first render so a pasted link works.
 @callback(
     [Output('dataset-select', 'value', allow_duplicate=True),
-     Output('embedding-select', 'value', allow_duplicate=True),
-     Output('color-select', 'value', allow_duplicate=True),
      Output('viz-mode', 'value', allow_duplicate=True),
-     Output('gene-select', 'value', allow_duplicate=True),
-     Output('custom-x-select', 'value', allow_duplicate=True),
-     Output('custom-y-select', 'value', allow_duplicate=True),
      Output('bin-number-slider', 'value', allow_duplicate=True),
      Output('percentile-slider', 'value', allow_duplicate=True),
      Output('enable-binning', 'value', allow_duplicate=True),
-     Output('custom-embedding-container', 'style', allow_duplicate=True),
-     Output('gene-select-container', 'style', allow_duplicate=True),
-     Output('gene-select', 'options', allow_duplicate=True)],
+     Output('enable-smoothing', 'value', allow_duplicate=True),
+     Output('bin-stat', 'value', allow_duplicate=True),
+     Output('plot-type', 'value', allow_duplicate=True),
+     Output('compare-genes', 'value', allow_duplicate=True),
+     Output('gene-select-2', 'value', allow_duplicate=True),
+     Output('compare-shared-scale', 'value', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
-    [State('dataset-select', 'options'),
-     State('dataset-select', 'value')],
-    prevent_initial_call=True
+    prevent_initial_call='initial_duplicate'
 )
 @handle_callback_error
 @log_callback_info
-def initialize_from_url(search, pathname, dataset_options, current_dataset):
-    triggered_id = ctx.triggered_id if ctx.triggered_id else 'url.search'
-    
-    if triggered_id == 'url.pathname':
-        # Pure pathname navigation (no shared state): leave controls untouched.
-        return (no_update,) * 13
-    
-    if not search:
-        # No shared-URL state: leave every control at its layout/dataset default.
-        return (no_update,) * 13
-    
+def initialize_from_url(search, pathname):
+    n_out = 11
+    triggered_id = ctx.triggered_id
+    # Pure pathname navigation (no new shared state): leave controls untouched.
+    if triggered_id == 'url.pathname' or not search:
+        return (no_update,) * n_out
     state = parse_url_state(search)
     if not state:
-        # No shared-URL state: leave every control at its layout/dataset default.
-        return (no_update,) * 13
-    
-    # Get custom embedding values and binning parameters
-    custom_x = state.get('custom_x') if state.get('embedding') == 'custom_embedding' else None
-    custom_y = state.get('custom_y') if state.get('embedding') == 'custom_embedding' else None
-    bin_number = state.get('bins', 50)
-    percentile = state.get('percentile', 0.95)
-    enable_binning = state.get('enable_binning', [])
-    
-    # Show custom embedding container if custom embedding is selected
-    container_style = {'display': 'block'} if state.get('embedding') == 'custom_embedding' else {'display': 'none'}
-    
-    # Determine gene select container visibility
-    gene_container_style = {'display': 'block'} if state.get('color') == 'gene_expression' else {'display': 'none'}
-    
+        return (no_update,) * n_out
+
     return (
-        state.get('dataset'),
-        state.get('embedding'),
-        state.get('color'),
+        state.get('dataset', no_update),
         state.get('mode', 'random'),
-        state.get('gene'),
-        custom_x,
-        custom_y,
-        bin_number,
-        percentile,
-        enable_binning,
-        container_style,
-        gene_container_style,
-        []  # Empty options, will be populated by the gene_select callback
+        state.get('bins', no_update),
+        state.get('percentile', no_update),
+        state.get('enable_binning', no_update),
+        state.get('enable_smoothing', no_update),
+        state.get('bin_stat', no_update),
+        state.get('plot_type', no_update),
+        state.get('compare_genes', no_update),
+        state.get('gene2', no_update),
+        state.get('compare_shared_scale', no_update),
     )
 
 @callback(
@@ -90,45 +71,76 @@ def initialize_from_url(search, pathname, dataset_options, current_dataset):
      State('bin-number-slider', 'value'),
      State('percentile-slider', 'value'),
      State('enable-binning', 'value'),
-     State('main-plot', 'relayoutData'),
+     State('enable-smoothing', 'value'),
+     State('bin-stat', 'value'),
+     State('compare-genes', 'value'),
+     State('gene-select-2', 'value'),
+     State('compare-shared-scale', 'value'),
+     State('plot-type', 'value'),
+     State('group-gene-select', 'value'),
+     State('group-by-select', 'value'),
+     State('group-split-select', 'value'),
+     State('group-style', 'value'),
+     State('gene-module-select', 'value'),
+     State('group-positive-only', 'value'),
+     State('group-replicate-select', 'value'),
      State('url', 'href')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode, 
+def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               custom_x, custom_y, bin_number, percentile, enable_binning,
-              relay_data, current_url):
+              enable_smoothing, bin_stat, compare_genes, gene2, compare_shared_scale,
+              plot_type, group_gene, group_by, group_split, group_style,
+              gene_module, group_positive_only, group_replicate,
+              current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
-    
+
+    # Share-state schema v2 (see docs/VIEWER_SPEC.md). Only the keys relevant to the
+    # current view are written, so URLs stay lean; absent keys restore to defaults.
     state_dict = {
+        'v': 2,
         'dataset': dataset,
         'embedding': embedding,
         'color': color_by,
-        'mode': viz_mode
+        'mode': viz_mode,
+        'plot_type': plot_type,
     }
-    
+
     if color_by == 'gene_expression' and gene:
         state_dict['gene'] = gene
-    
+
+    # Two-gene side-by-side comparison.
+    if compare_genes:
+        state_dict['compare_genes'] = compare_genes
+        if gene2:
+            state_dict['gene2'] = gene2
+        if compare_shared_scale:
+            state_dict['compare_shared_scale'] = compare_shared_scale
+
+    # Spatial-map / binning controls (only meaningful on the custom DV/NT embedding).
     if embedding == 'custom_embedding':
         state_dict['custom_x'] = custom_x
         state_dict['custom_y'] = custom_y
         state_dict['bins'] = bin_number
         state_dict['percentile'] = percentile
         state_dict['enable_binning'] = enable_binning
-    
-    if relay_data:
-        view_state = {}
-        if 'xaxis.range[0]' in relay_data and 'xaxis.range[1]' in relay_data:
-            view_state['xrange'] = [relay_data['xaxis.range[0]'], relay_data['xaxis.range[1]']]
-        if 'yaxis.range[0]' in relay_data and 'yaxis.range[1]' in relay_data:
-            view_state['yrange'] = [relay_data['yaxis.range[0]'], relay_data['yaxis.range[1]']]
-        if view_state:
-            state_dict['view'] = view_state
-    
+        state_dict['enable_smoothing'] = enable_smoothing
+        state_dict['bin_stat'] = bin_stat
+
+    # Expression-by-group controls.
+    if plot_type == 'group':
+        state_dict['group_by'] = group_by
+        state_dict['group_split'] = group_split
+        state_dict['group_gene'] = group_gene
+        state_dict['group_style'] = group_style
+        state_dict['gene_module'] = gene_module
+        state_dict['group_positive_only'] = group_positive_only
+        state_dict['group_replicate'] = group_replicate
+
     base_url = current_url.split('?')[0]
-    share_url = create_share_url(base_url, state_dict)
-    
-    return {'display': 'block', 'width': '100%', 'marginTop': '10px'}, share_url 
+    url_value = create_share_url(base_url, state_dict)
+
+    return {'display': 'block', 'width': '100%', 'marginTop': '10px'}, url_value

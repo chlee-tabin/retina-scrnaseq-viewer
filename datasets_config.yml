@@ -20,6 +20,7 @@ datasets:
     default_gene: "FGF8"
     smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
     min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
+    replicate_columns: ["library", "genotype"]  # pseudobulk unit for the group figure (Panel A)
     gene_modules:              # functional gene groups for the dot-plot module selector
       NPY system: [NPY, NPY1R, NPY2R, NPY4R, NPY5R, NPY6R]
       Cell cycle: [MKI67, TOP2A, PCNA, CCND1, CCNB2, CDK1, UBE2C, BIRC5]
@@ -43,6 +44,39 @@ datasets:
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
     default_gene: "FGF8"
     default_embedding: "X_umap.harmony"   # no DV/NT scores -> open on the Harmony UMAP
+    # Categorical display: the default cell-type column, its biological (maturation)
+    # order, and a fixed colour per type so EVERY view (UMAP scatter, violin, dot
+    # plot) renders a given cell type with the SAME colour. Edit here to restyle
+    # without touching code; types not listed fall back to the default palette.
+    annotation_column: "annotation_refined"
+    annotation_order:
+      - "RPC"
+      - "Neurogenic"
+      - "HC/AC cycling precursor"
+      - "Horizontal"
+      - "Amacrine (GABAergic)"
+      - "Amacrine (glycinergic)"
+      - "Amacrine"
+      - "Cone"
+      - "Retinal ganglion"
+      - "Interferon-responding"
+      - "Vascular/endothelial"
+    annotation_colors:
+      "RPC": "#4E79A7"
+      "Neurogenic": "#F28E2B"
+      "HC/AC cycling precursor": "#EDC948"
+      "Horizontal": "#59A14F"
+      "Amacrine (GABAergic)": "#B07AA1"
+      "Amacrine (glycinergic)": "#9C755F"
+      "Amacrine": "#FF9DA7"
+      "Cone": "#76B7B2"
+      "Retinal ganglion": "#E15759"
+      "Interferon-responding": "#BAB0AC"
+      "Vascular/endothelial": "#B6992D"
+    # Pseudobulk replicate unit for the "Expression by group" figure (Panel A):
+    # one dot per (cell type x replicate). library x genotype = per-library vireo
+    # demultiplexed donor, matching the manuscript NPY figure.
+    replicate_columns: ["library", "genotype"]
     # Curated functional gene groups for the "Expression by group" dot-plot module
     # selector. Genes absent from the dataset are silently skipped. (Clustering-derived
     # modules can be added here later.)

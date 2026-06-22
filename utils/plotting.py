@@ -26,7 +26,64 @@ def _message_figure(text):
     )
     return fig
 
-def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, selection_data=None):
+
+# A distinct, colour-blind-aware qualitative palette for categorical colouring when
+# a dataset does not configure an explicit `annotation_colors` map. Replaces plotly's
+# pale, fast-recycling Set3 (the source of the "awful" full-chick categorical scheme).
+CATEGORICAL_FALLBACK = px.colors.qualitative.Dark24
+
+
+def _resolve_order(values, category_order=None, by_series=None):
+    """Stable category order: a configured `category_order` first (present categories
+    only), then the rest alphabetically. With no configured order, order by descending
+    median of `by_series` when given, else alphabetically.
+    """
+    present = list(pd.unique(pd.Series(values).astype(str)))
+    if category_order:
+        head = [str(c) for c in category_order if str(c) in present]
+        tail = sorted(c for c in present if c not in set(head))
+        return head + tail
+    if by_series is not None:
+        med = (pd.DataFrame({'g': pd.Series(values).astype(str),
+                             'v': np.asarray(by_series, dtype=float)})
+               .groupby('g', observed=True)['v'].median()
+               .sort_values(ascending=False))
+        return med.index.tolist()
+    return sorted(present)
+
+
+def _resolve_color_map(order, color_map=None):
+    """Resolve a full {category -> colour} map over `order`, replicating plotly's own
+    fallback rule (advance the palette by the number of already-assigned categories) so
+    the scatter, violin and figure colour an unmapped category identically -- even under
+    a partial `annotation_colors` map.
+    """
+    full = dict(color_map or {})
+    for cat in (order or []):
+        if cat not in full:
+            full[cat] = CATEGORICAL_FALLBACK[len(full) % len(CATEGORICAL_FALLBACK)]
+    return full
+
+
+def _categorical_px_kwargs(col_name, color_map=None, order=None):
+    """plotly-express kwargs for consistent categorical colour + order. When the render
+    `order` is known we resolve a FULL colour map (configured colours + a deterministic
+    fallback per unmapped category) and pass only that -- so every view (scatter, violin,
+    figure) colours a given category identically even with a partial `annotation_colors`.
+    """
+    kw = {}
+    if order:
+        kw['category_orders'] = {col_name: order}
+        kw['color_discrete_map'] = _resolve_color_map(order, color_map)
+    else:
+        kw['color_discrete_sequence'] = CATEGORICAL_FALLBACK
+        if color_map:
+            kw['color_discrete_map'] = dict(color_map)
+    return kw
+
+
+def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, selection_data=None,
+                        color_map=None, category_order=None):
     """
     Create a scatter plot with proper styling based on embedding type
     
@@ -50,14 +107,20 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
         x_label = f'{embedding}_1'
         y_label = f'{embedding}_2'
     
-    fig = px.scatter(
-        df, x='x', y='y', color='color',
-        labels={'x': x_label, 'y': y_label},
+    px_kwargs = dict(
+        labels={'x': x_label, 'y': y_label, 'color': color_by},
         title=f'Single-cell visualization - {embedding}',
-        color_discrete_sequence=px.colors.qualitative.Set3 if treat_as_categorical else None,
-        color_continuous_scale='viridis' if not treat_as_categorical else None,
-        hover_data=None
+        hover_data=None,
     )
+    if treat_as_categorical:
+        df = df.copy()
+        df['color'] = df['color'].astype(str)
+        order = _resolve_order(df['color'], category_order=category_order)
+        px_kwargs.update(_categorical_px_kwargs('color', color_map=color_map, order=order))
+    else:
+        px_kwargs['color_continuous_scale'] = 'viridis'
+
+    fig = px.scatter(df, x='x', y='y', color='color', **px_kwargs)
     
     # Apply different styling based on embedding type
     if 'umap' in embedding.lower():
@@ -411,7 +474,8 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
     return H_mean, H_counts, xedges, yedges, vmax
 
 
-def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin'):
+def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin',
+                                 color_map=None, category_order=None):
     """Expression of one gene across the categories of a .obs column.
 
     Parameters
@@ -437,31 +501,33 @@ def create_group_expression_plot(df, gene, group_by, split_by=None, style='violi
     if len(plot_df) == 0:
         return _message_figure("No data to plot for this selection.")
 
-    # Order groups by descending median expression so the most-expressing
-    # categories read left-to-right.
-    order = (
-        plot_df.groupby(group_by, observed=True)['expr']
-        .median()
-        .sort_values(ascending=False)
-        .index.tolist()
-    )
-    order = [str(c) for c in order]
-
     # Stringify the categorical columns so plotly keeps the explicit order and
     # treats them as discrete.
     plot_df[group_by] = plot_df[group_by].astype(str)
-    color_arg = None
+
+    # Group order: a configured cell-type order if given, else descending median
+    # expression so the most-expressing categories read left-to-right.
+    order = _resolve_order(plot_df[group_by], category_order=category_order,
+                           by_series=plot_df['expr'])
+
+    # Colour by the split column if one is chosen; otherwise colour each group with
+    # its fixed palette colour (consistent with the UMAP / dot-plot views).
     if split_by and split_by in plot_df.columns:
         plot_df[split_by] = plot_df[split_by].astype(str)
         color_arg = split_by
+        color_kwargs = {'color_discrete_sequence': CATEGORICAL_FALLBACK,
+                        'category_orders': {group_by: order}}
+    else:
+        color_arg = group_by
+        color_kwargs = _categorical_px_kwargs(group_by, color_map=color_map, order=order)
 
     common = dict(
         x=group_by,
         y='expr',
         color=color_arg,
-        category_orders={group_by: order},
         title=f"{gene} expression by {group_by}",
         labels={'expr': f"{gene} (log-normalized)", group_by: group_by},
+        **color_kwargs,
     )
 
     if style == 'box':
@@ -480,7 +546,7 @@ def create_group_expression_plot(df, gene, group_by, split_by=None, style='violi
     return fig
 
 
-def create_dotplot(expr_df, genes, group_by):
+def create_dotplot(expr_df, genes, group_by, category_order=None):
     """Scanpy-style dot plot: gene set (rows) x categories (columns).
 
     Dot size encodes the fraction of cells with detectable expression
@@ -521,6 +587,8 @@ def create_dotplot(expr_df, genes, group_by):
     # Keep the requested gene order top-to-bottom (reverse so the first gene is
     # at the top of the y-axis).
     gene_order = list(reversed(genes))
+    # Order the category (x) axis by the configured cell-type order when available.
+    x_order = _resolve_order(dot_df[group_by], category_order=category_order)
 
     fig = px.scatter(
         dot_df,
@@ -530,7 +598,7 @@ def create_dotplot(expr_df, genes, group_by):
         color='mean_expr',
         color_continuous_scale='viridis',
         size_max=18,
-        category_orders={'gene': gene_order},
+        category_orders={'gene': gene_order, group_by: x_order},
         labels={
             'fraction': 'Fraction detected',
             'mean_expr': 'Mean expression',
@@ -547,9 +615,18 @@ def create_dotplot(expr_df, genes, group_by):
     return fig
 
 
+def _dual_colorbar_title(name, shared_scale, is_pct):
+    """Colorbar title for a two-gene panel: the per-gene name by default; a single
+    neutral title under a shared scale; '(% detected)' when the bin stat is frac_pos."""
+    if shared_scale:
+        return '% detected' if is_pct else 'expression'
+    return f"{name} (% detected)" if is_pct else str(name)
+
+
 def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
                             bin_size=50, percentile=0.95, smooth_sigma=0,
-                            min_cells=1, color_floor=0.05):
+                            min_cells=1, color_floor=0.05, shared_scale=False,
+                            bin_stat='mean'):
     """Two genes side-by-side over the same embedding for visual comparison.
 
     Each panel shows one gene's expression. When `binned` (custom spatial
@@ -581,10 +658,15 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
     y = np.asarray(y, dtype=float)
 
     fig = make_subplots(rows=1, cols=2, subplot_titles=[str(n) for n in names],
-                        horizontal_spacing=0.08)
+                        horizontal_spacing=0.14)
+
+    # By default each gene gets its OWN colour scale + colorbar, so a weakly
+    # expressed gene (e.g. CYP26C1) is not flattened by a strongly expressed one
+    # (e.g. FGF8) under a shared maximum -- the reason CYP26C1 "did not show up".
+    # shared_scale=True restores a single scale for absolute side-by-side comparison.
+    cbx = [0.43, 1.005]  # colorbar x-positions for the left / right panels
 
     if binned:
-        # Compute both bin grids first so the shared color scale spans both.
         grids = []
         vmaxes = []
         for vals in vals_list:
@@ -592,15 +674,17 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
                 x, y, vals,
                 bin_size=bin_size, percentile=percentile,
                 smooth_sigma=smooth_sigma, min_cells=min_cells,
-                color_floor=color_floor,
+                color_floor=color_floor, stat=bin_stat,
             )
             grids.append((H_mean, xedges, yedges))
             vmaxes.append(vmax)
         shared_vmax = max(vmaxes) if vmaxes else float(color_floor)
+        is_pct = (bin_stat == 'frac_pos')
 
         for idx, (H_mean, xedges, yedges) in enumerate(grids):
             x_centers = (xedges[:-1] + xedges[1:]) / 2
             y_centers = (yedges[:-1] + yedges[1:]) / 2
+            zmax = shared_vmax if shared_scale else vmaxes[idx]
             fig.add_trace(
                 go.Heatmap(
                     z=H_mean.T,
@@ -608,35 +692,41 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
                     y=y_centers,
                     colorscale='viridis',
                     zmin=0,
-                    zmax=shared_vmax,
+                    zmax=zmax,
                     hoverongaps=False,
-                    showscale=(idx == 1),  # one shared colorbar on the right
-                    colorbar=dict(title='expr') if idx == 1 else None,
+                    showscale=(idx == 1) if shared_scale else True,
+                    colorbar=dict(title=_dual_colorbar_title(names[idx], shared_scale, is_pct),
+                                  x=cbx[idx], len=1.0, thickness=12),
                 ),
                 row=1, col=idx + 1,
             )
     else:
-        # Per-cell scatter; share the color scale across panels.
-        finite_max = 0.0
+        # Per-cell scatter. Each panel uses its own maximum unless shared_scale.
+        per_max = []
         for vals in vals_list:
             arr = np.asarray(vals, dtype=float)
-            if arr.size and np.isfinite(arr).any():
-                finite_max = max(finite_max, float(np.nanmax(arr)))
-        shared_vmax = max(finite_max, float(color_floor))
+            per_max.append(float(np.nanmax(arr)) if arr.size and np.isfinite(arr).any() else 0.0)
+        shared_vmax = max(per_max + [float(color_floor)])
 
         for idx, vals in enumerate(vals_list):
+            cmax = shared_vmax if shared_scale else max(per_max[idx], float(color_floor))
+            v = np.asarray(vals, dtype=float)
+            # Draw expressing cells LAST (on top) so a sparse gene's few positive
+            # cells are not hidden under the many non-expressing cells.
+            order = np.argsort(v, kind='stable')
+            cb_title = 'expression' if shared_scale else str(names[idx])
             fig.add_trace(
                 go.Scattergl(
-                    x=x, y=y,
+                    x=x[order], y=y[order],
                     mode='markers',
                     marker=dict(
                         size=3,
-                        color=np.asarray(vals, dtype=float),
+                        color=v[order],
                         colorscale='viridis',
                         cmin=0,
-                        cmax=shared_vmax,
-                        showscale=(idx == 1),
-                        colorbar=dict(title='expr') if idx == 1 else None,
+                        cmax=cmax,
+                        showscale=(idx == 1) if shared_scale else True,
+                        colorbar=dict(title=cb_title, x=cbx[idx], len=1.0, thickness=12),
                     ),
                     showlegend=False,
                     hoverinfo='skip',
@@ -665,5 +755,174 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
         plot_bgcolor='white',
         height=600,
         margin=dict(t=60, l=60, r=20, b=60),
+    )
+    return fig
+
+
+def create_group_expression_figure(
+    df, gene, group_by, *, color_map=None, category_order=None,
+    positive_only=True, min_cells_pseudobulk=10, jitter_skip_threshold=2000,
+):
+    """NPY-style two-panel expression figure for one gene across cell groups.
+
+    Plotly reproduction of scripts/viewer_full_chick/16b_npy_figure.R.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        One row per cell. Required column 'expr' = per-cell log1p(CP10K) (the h5ad
+        .X). Optional 'ncount' (= nCount_RNA, the per-cell library size) and
+        'replicate' enable Panel A; without them only the per-cell violin panel is
+        drawn. Plus the `group_by` categorical column.
+    gene : str
+        Gene name (titles / axis labels).
+    group_by : str
+        Categorical column for the x-axis (e.g. cell type).
+    color_map : dict or None
+        {category -> hex} so each group keeps its dataset-wide colour.
+    category_order : list or None
+        Explicit left-to-right category order (e.g. maturation order).
+    positive_only : bool
+        Panel B shows only cells with expr > 0 (gene-positive). Panel A pseudobulk
+        always uses every cell in the group (it is depth-normalised).
+    min_cells_pseudobulk : int
+        Drop a (group x replicate) pseudobulk dot with fewer than this many cells.
+    jitter_skip_threshold : int
+        Suppress the per-cell jitter overlay for groups with more positive cells
+        than this (keeps the violin readable for the big progenitor classes).
+
+    Panel A pseudobulk = log1p( sum(raw) / sum(depth) * 1e4 ) per (group x
+    replicate), with raw_i = expm1(expr_i) * ncount_i / 1e4 reconstructed exactly
+    from the log-normalised .X plus the per-cell depth.
+    """
+    if df is None or len(df) == 0 or group_by not in df.columns:
+        return _message_figure("No data to plot for this selection.")
+    d = df[df[group_by].notna() & df['expr'].notna()].copy()
+    if len(d) == 0:
+        return _message_figure("No data to plot for this selection.")
+    d[group_by] = d[group_by].astype(str)
+
+    order = _resolve_order(d[group_by], category_order=category_order, by_series=d['expr'])
+    pos_index = {g: i for i, g in enumerate(order)}
+    K = len(order)
+
+    full_cmap = _resolve_color_map(order, color_map)
+
+    def gcolor(g):
+        return full_cmap.get(g, CATEGORICAL_FALLBACK[0])
+
+    has_pb = ('ncount' in d.columns and 'replicate' in d.columns
+              and d['ncount'].notna().any() and d['replicate'].notna().any())
+    if has_pb:
+        # Panel A reconstructs raw counts as expm1(X)*nCount/1e4, valid only when .X is
+        # log1p(CP10K) normalised on nCount_RNA. Verify the reconstructed values are
+        # near-integer for this gene; if a dataset normalised .X differently, omit
+        # Panel A rather than draw unverified pseudobulk.
+        _nc = pd.to_numeric(d['ncount'], errors='coerce').to_numpy()
+        _raw = np.expm1(d['expr'].to_numpy()) * _nc / 1e4
+        _pos = _raw[np.isfinite(_raw) & (d['expr'].to_numpy() > 0)]
+        if _pos.size and float(np.max(np.abs(_pos - np.round(_pos)))) > 1e-2:
+            has_pb = False
+
+    rows = 2 if has_pb else 1
+    titles = []
+    if has_pb:
+        titles.append(f"Pseudobulk {gene} per population x replicate (dot size increases with n cells)")
+    pos_label = f"{gene}+ cells only" if positive_only else "all cells"
+    titles.append(f"Per-cell {gene} ({pos_label}), by population")
+
+    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.10,
+                        subplot_titles=titles)
+    row_b = 2 if has_pb else 1
+
+    # ---- Panel A: pseudobulk per (group x replicate), dot size = n cells ----
+    if has_pb:
+        a = d[d['ncount'].notna()].copy()
+        a['raw'] = np.expm1(a['expr'].to_numpy()) * a['ncount'].to_numpy() / 1e4
+        grp = a.groupby([group_by, 'replicate'], observed=True)
+        A = grp.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
+                    n=('expr', 'size')).reset_index()
+        A = A[(A['depth'] > 0) & (A['n'] >= int(min_cells_pseudobulk))].copy()
+        A['pb'] = np.log1p(A['raw_sum'] / A['depth'] * 1e4)
+        n_ref = max(1, int(A['n'].max())) if len(A) else 1
+        # diameter grows with sqrt(n); +6px floor keeps small replicates visible
+        # (so size increases with n but is not strictly area-proportional).
+        A['px'] = 6.0 + 18.0 * np.sqrt(A['n'] / n_ref)
+        for g in order:
+            sub = A[A[group_by] == g]
+            if not len(sub):
+                continue
+            i = pos_index[g]
+            jx = i + np.random.RandomState(i + 1).uniform(-0.16, 0.16, len(sub))
+            fig.add_trace(go.Scatter(
+                x=jx, y=sub['pb'], mode='markers',
+                marker=dict(size=sub['px'], color=gcolor(g), line=dict(width=0), opacity=0.8),
+                showlegend=False,
+                customdata=np.stack([sub['replicate'].astype(str), sub['n']], axis=-1),
+                hovertemplate=(f"{g}<br>replicate=%{{customdata[0]}}<br>"
+                               f"pseudobulk {gene}=%{{y:.3f}}<br>n cells=%{{customdata[1]}}<extra></extra>"),
+            ), row=1, col=1)
+            m = float(sub['pb'].mean())
+            fig.add_trace(go.Scatter(
+                x=[i], y=[m], mode='markers',
+                marker=dict(symbol='line-ew', size=24, color='rgba(60,60,60,0.9)',
+                            line=dict(width=2.5, color='rgba(60,60,60,0.9)')),
+                showlegend=False,
+                hovertemplate=f"{g}<br>mean across replicates={m:.3f}<extra></extra>",
+            ), row=1, col=1)
+        fig.update_yaxes(title_text=f"Pseudobulk {gene}<br>log1p(CP10K)", row=1, col=1)
+
+    # ---- Panel B: per-cell log1p(CP10K) violins of (positive) cells ----
+    b = d[d['expr'] > 0].copy() if positive_only else d.copy()
+    if len(b) == 0 and not has_pb:
+        return _message_figure(f"No {gene}-positive cells to plot for this selection.")
+    n_pos = b.groupby(group_by, observed=True)['expr'].size().to_dict() if len(b) else {}
+    y_top = float(b['expr'].max()) if len(b) else 1.0
+    for g in order:
+        i = pos_index[g]
+        sub = b[b[group_by] == g]
+        if len(sub):
+            fig.add_trace(go.Violin(
+                x=np.full(len(sub), i), y=sub['expr'].to_numpy(),
+                width=0.85, scalemode='width', points=False,
+                line=dict(color='rgba(50,50,50,0.6)', width=1),
+                fillcolor=gcolor(g), opacity=0.55, showlegend=False,
+                hovertemplate=f"{g}<br>{gene}=%{{y:.3f}}<extra></extra>",
+            ), row=row_b, col=1)
+            if len(sub) <= int(jitter_skip_threshold):
+                jx = i + np.random.RandomState(1000 + i).uniform(-0.14, 0.14, len(sub))
+                fig.add_trace(go.Scatter(
+                    x=jx, y=sub['expr'], mode='markers',
+                    marker=dict(size=2.5, color='rgba(20,20,20,0.22)'),
+                    showlegend=False, hoverinfo='skip',
+                ), row=row_b, col=1)
+        # Always annotate the positive-cell count (n=0 for groups with none) so a
+        # zero-positive group reads as an explicit n=0 rather than a silent gap.
+        fig.add_trace(go.Scatter(
+            x=[i], y=[y_top * 1.06], mode='text',
+            text=[f"n={int(n_pos.get(g, 0))}"],
+            textfont=dict(size=10, color='grey'),
+            showlegend=False, hoverinfo='skip',
+        ), row=row_b, col=1)
+    fig.update_yaxes(title_text=f"{gene} (log-norm)<br>{pos_label}", row=row_b, col=1)
+    if len(b) == 0:
+        # has_pb is True here (else we returned above): Panel A is informative but no
+        # cell is positive -- label the empty violin panel instead of leaving it blank.
+        xr = 'x domain' if row_b == 1 else f'x{row_b} domain'
+        yr = 'y domain' if row_b == 1 else f'y{row_b} domain'
+        fig.add_annotation(text=f"No {gene}-positive cells in any population",
+                           xref=xr, yref=yr, x=0.5, y=0.5, showarrow=False,
+                           font=dict(size=14, color='#888'))
+
+    for r in range(1, rows + 1):
+        fig.update_xaxes(
+            tickmode='array', tickvals=list(range(K)), ticktext=order,
+            tickangle=-40, range=[-0.6, K - 0.4], showgrid=False, row=r, col=1,
+        )
+    fig.update_layout(
+        plot_bgcolor='white',
+        violinmode='overlay',
+        height=780 if has_pb else 480,
+        margin=dict(t=60, l=80, r=30, b=140),
     )
     return fig

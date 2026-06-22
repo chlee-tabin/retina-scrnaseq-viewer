@@ -130,6 +130,16 @@ def create_control_panel():
                                     persistence=False,
                                     clearable=True,
                                 ),
+                                # Independent per-gene colour scales by default so a
+                                # weak gene (CYP26C1) is not washed out by a strong one
+                                # (FGF8); tick to compare on one absolute scale.
+                                dcc.Checklist(
+                                    id='compare-shared-scale',
+                                    options=[{'label': ' Shared colour scale (absolute compare)',
+                                              'value': 'enabled'}],
+                                    value=[],
+                                    className="mt-2",
+                                ),
                             ], id='gene-select-2-container', style={'display': 'none'}),
                         ])
                     ], id='gene-select-container',
@@ -180,19 +190,41 @@ def create_control_panel():
                     dcc.RadioItems(
                         id='group-style',
                         options=[
-                            {'label': 'Violin', 'value': 'violin'},
+                            {'label': 'Figure: pseudobulk + positive-cell violin', 'value': 'figure'},
+                            {'label': 'Violin (all cells)', 'value': 'violin'},
                             {'label': 'Box', 'value': 'box'},
                             {'label': 'Strip', 'value': 'strip'},
                             {'label': 'Dot plot (gene set)', 'value': 'dotplot'},
                         ],
-                        value='violin',
+                        value='figure',  # default: the polished 2-panel NPY-style figure
+                        labelStyle={'display': 'block'},
                     ),
 
-                    html.Label("Gene module (dot plot):", className="mt-3"),
-                    dcc.Dropdown(
-                        id='gene-module-select',
-                        placeholder="Select a gene module",
-                    ),
+                    # Figure-style options (shown only for the 'figure' style):
+                    # Panel A pseudobulk replicate unit + Panel B positive-cell gate.
+                    html.Div([
+                        dcc.Checklist(
+                            id='group-positive-only',
+                            options=[{'label': ' Violin: positive cells only (expr > 0)',
+                                      'value': 'enabled'}],
+                            value=['enabled'],
+                            className="mt-2 mb-1",
+                        ),
+                        html.Label("Pseudobulk replicate (Panel A):", className="mt-2"),
+                        dcc.Dropdown(
+                            id='group-replicate-select',
+                            placeholder="Replicate unit for pseudobulk dots",
+                        ),
+                    ], id='figure-style-controls'),
+
+                    # Gene-module selector (shown only for the 'dotplot' style).
+                    html.Div([
+                        html.Label("Gene module (dot plot):", className="mt-3"),
+                        dcc.Dropdown(
+                            id='gene-module-select',
+                            placeholder="Select a gene module",
+                        ),
+                    ], id='module-controls', style={'display': 'none'}),
                 ], id='group-controls', style={'display': 'none'}),
             ])
         ])
