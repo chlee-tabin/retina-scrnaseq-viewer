@@ -33,16 +33,19 @@ from callbacks.main_callbacks import *
 from callbacks.status_callbacks import *
 
 # Import utilities
-from utils.data_loading import load_adata, load_dataset_config, validate_datasets
+from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding
 from utils.config import load_config
 from utils.error_handling import handle_callback_error, log_callback_info
+from utils.state import state_for_dataset
 from components.status_bar import create_status_bar
 from utils.plotting import create_scatter_plot, create_metacell_plot
 
-# Add command line argument parsing
+# Add command line argument parsing. Use parse_known_args (not parse_args) so that
+# importing this module under gunicorn -- where sys.argv carries gunicorn's own flags
+# (--bind, --workers, ...) -- does not abort with "unrecognized arguments".
 parser = argparse.ArgumentParser()
 parser.add_argument('-debug', action='store_true', help='Enable debug logging')
-args = parser.parse_args()
+args, _ = parser.parse_known_args()
 
 # Configure logging based on command line argument
 logging.basicConfig(
@@ -62,13 +65,23 @@ logger = logging.getLogger(__name__)
 DATA_DIR = os.getenv("DATA_DIR", "data")
 
 # On platforms where the data is not present locally (e.g. Hugging Face Spaces),
-# optionally download the configured datasets into DATA_DIR from a Hugging Face
-# repo. No-op unless HF_DATA_REPO is set (see utils/data_provision).
-try:
-    from utils.data_provision import ensure_datasets
-    ensure_datasets(load_dataset_config())
-except Exception as e:
-    logger.error(f"Dataset provisioning step failed (continuing): {e}")
+# download the configured datasets into DATA_DIR from a Hugging Face repo. This
+# runs in a BACKGROUND thread so it never blocks the web server from binding its
+# port -- the platform health check (and Space promotion) must not wait ~30-40 s
+# for ~6 GB to download. Each dataset is also fetched on-demand in load_adata if a
+# user selects it before the pre-warm reaches it. No-op unless HF_DATA_REPO is set.
+import threading
+
+
+def _prewarm_datasets():
+    try:
+        from utils.data_provision import ensure_datasets
+        ensure_datasets(load_dataset_config())
+    except Exception as e:
+        logger.error(f"Background dataset provisioning failed (continuing): {e}")
+
+
+threading.Thread(target=_prewarm_datasets, name="dataset-prewarm", daemon=True).start()
 
 # Initialize the Dash app with bootstrap theme
 app = dash.Dash(
@@ -112,6 +125,46 @@ def create_metacells(x, y, values=None, n_bins=50):
         
         return H_values, xedges, yedges
     return H, xedges, yedges
+
+
+def _detect_cp_target(adata, n_sample=256):
+    """Detect the counts-per-X normalisation target of a log1p-normalised ``.X``.
+
+    For CP-normalised data every cell's ``expm1(.X)`` sums to the same target (1e4 for
+    CP10K, 1e6 for CPM). Sample cells, sum ``expm1`` across genes, and return the
+    median when the sums are tightly clustered; return None otherwise (raw counts,
+    z-scored, scran-pooled, or otherwise not a clean log1p(CP)) so the pseudobulk panel
+    is omitted rather than reconstructed from an unknown normalisation.
+    """
+    try:
+        n = adata.n_obs
+        if n == 0:
+            return None
+        idx = np.unique(np.linspace(0, n - 1, min(n_sample, n)).astype(int))
+        X = adata.X[idx]
+        if scipy.sparse.issparse(X):
+            sums = np.asarray(np.expm1(X.toarray()).sum(axis=1)).ravel()
+        else:
+            sums = np.expm1(np.asarray(X)).sum(axis=1).ravel()
+        sums = sums[np.isfinite(sums) & (sums > 0)]
+        if sums.size < max(5, 0.5 * len(idx)):
+            return None
+        med = float(np.median(sums))
+        if med <= 0:
+            return None
+        # A genuine single-target CP normalisation makes every cell's sum EQUAL to the
+        # target (only ~1e-7 float round-off). A robust 0.5-99.5 percentile band stays
+        # ~0 for such data but blows past 2% for any minority block on a different scale
+        # (e.g. a CPM arm is 100x off and, even at ~1% of cells, dominates the
+        # reconstructed pseudobulk) -- so omit Panel A. Non-finite sums are filtered
+        # above; a stray aberrant cell in the 0.5% tails is tolerated.
+        lo, hi = np.percentile(sums, [0.5, 99.5])
+        if (float(hi) - float(lo)) / med > 0.02:
+            return None
+        return med
+    except Exception as e:  # noqa: BLE001 - best-effort; omit Panel A on any failure
+        logger.warning(f"CP-target detection failed ({e}); pseudobulk panel omitted")
+        return None
 
 # Main layout with fixed sidebar
 app.layout = dbc.Container([
@@ -252,7 +305,8 @@ def update_dataset_info(dataset_id, data_store):
      Output('color-select', 'value', allow_duplicate=True),
      Output('gene-select', 'value', allow_duplicate=True),
      Output('gene-select', 'options', allow_duplicate=True),
-     Output('loading-output', 'children', allow_duplicate=True)],
+     Output('loading-output', 'children', allow_duplicate=True),
+     Output('embedding-select', 'value', allow_duplicate=True)],
     [Input('dataset-select', 'value'),
      Input('url', 'search')],
     [State('color-select', 'value'),
@@ -263,17 +317,22 @@ def update_dataset_info(dataset_id, data_store):
 @log_callback_info
 def update_data(dataset_id, url_search, current_color, current_gene):
     if not dataset_id:
-        return None, [], [], None, None, [], ""
+        return None, [], [], None, None, [], "", 'custom_embedding'
     
     try:
         config = load_dataset_config()
         dataset = config['datasets'][dataset_id]
         adata = load_adata(dataset['file_path'])
         
-        # Determine column types
+        # Determine column types. A low-cardinality INTEGER column (cluster ids, Phase
+        # codes) is treated as CATEGORICAL -- matching _is_categorical_series in
+        # main_callbacks -- so such an annotation is offered in the group-by / colour
+        # controls instead of being mis-handled as a continuous axis.
         column_types = {}
         for col in adata.obs.columns:
-            if pd.api.types.is_numeric_dtype(adata.obs[col]):
+            s = adata.obs[col]
+            is_small_int = pd.api.types.is_integer_dtype(s) and len(s.unique()) <= 50
+            if pd.api.types.is_numeric_dtype(s) and not is_small_int:
                 column_types[col] = 'numeric'
             else:
                 column_types[col] = 'categorical'
@@ -283,6 +342,7 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         
         data_store = {
             'filename': dataset['file_path'],
+            'dataset_id': dataset_id,
             'n_cells': adata.n_obs,
             'embeddings': available_embeddings + ['custom_embedding'],
             'metadata_cols': list(adata.obs.columns),
@@ -293,6 +353,23 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             'smooth_sigma': dataset.get('smooth_sigma', 1.5),
             'min_cells_per_bin': dataset.get('min_cells_per_bin', 1),
             'color_floor': dataset.get('color_floor', 0.05),
+            # Optional per-dataset gene sets for the "Expression by group" dot
+            # plot, and a path to precomputed DEG results. Both default to
+            # absent/empty so datasets without them simply hide the controls.
+            'gene_modules': dataset.get('gene_modules', {}),
+            'deg_results_path': dataset.get('deg_results_path'),
+            # Default gene (for the group view), categorical display (consistent
+            # per-type colours + biological order), and the pseudobulk replicate
+            # unit -- all optional, all from datasets_config.yml.
+            'default_gene': dataset.get('default_gene'),
+            'annotation_column': dataset.get('annotation_column'),
+            'annotation_order': dataset.get('annotation_order', []),
+            'annotation_colors': dataset.get('annotation_colors', {}),
+            'replicate_columns': dataset.get('replicate_columns', []),
+            # CP-normalisation target of .X (1e4=CP10K, 1e6=CPM, ...) so the group
+            # "Figure" reconstructs raw counts for ANY log1p(CP*) normalisation; None
+            # when .X is not a clean log1p(CP) (then Panel A is omitted).
+            'x_norm_target': _detect_cp_target(adata),
         }
         
         # Create embedding options with custom embedding as first option
@@ -302,8 +379,9 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             {'label': emb, 'value': emb} for emb in available_embeddings
         ]
         
-        # Check URL state if available
-        state = parse_url_state(url_search) if url_search else None
+        # Apply shared-URL state only when it belongs to the loaded dataset; the
+        # state_for_dataset seam centralises this stale-state guard for all URL readers.
+        state = state_for_dataset(url_search, dataset_id) if url_search else None
         url_color = state.get('color') if state else None
         url_gene = state.get('gene') if state else None
         
@@ -342,64 +420,33 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         # client-side; gene options are otherwise filled by update_gene_select).
         gene_options = [{'label': g, 'value': g} for g in sorted(data_store['genes'])]
 
-        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, ""
+        # Pick the embedding to open on: a UMAP for datasets without DV/NT spatial
+        # scores (e.g. the full-retina object) so they don't open on a blank custom
+        # plot; the topographic custom view for the spatial RPC datasets.
+        embedding_value = choose_default_embedding(
+            available_embeddings, set(data_store['metadata_cols']),
+            config_default=dataset.get('default_embedding'),
+            url_embedding=(state.get('embedding') if state else None))
+
+        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, "", embedding_value
         
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"
         logger.error(error_message)
-        return None, [], [], None, None, [], error_message
+        return None, [], [], None, None, [], error_message, 'custom_embedding'
 
-# Update the initialization callback to be more robust
-@callback(
-    [Output('dataset-select', 'value', allow_duplicate=True),
-     Output('embedding-select', 'value', allow_duplicate=True),
-     Output('color-select', 'value', allow_duplicate=True),
-     Output('viz-mode', 'value', allow_duplicate=True),
-     Output('gene-select', 'value', allow_duplicate=True)],
-    [Input('url', 'search')],
-    [State('dataset-select', 'options'),
-     State('dataset-select', 'value')],
-    prevent_initial_call='initial_duplicate'
-)
-def initialize_from_url(search, dataset_options, current_dataset):
-    if not search:
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    
-    try:
-        state = parse_url_state(search)
-        if not state:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        
-        return (
-            state.get('dataset'),
-            state.get('embedding'),
-            state.get('color'),
-            state.get('mode', 'cells'),
-            state.get('gene')
-        )
-    except Exception as e:
-        logger.error(f"Error initializing from URL: {str(e)}")
-        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+# NOTE: restoring controls from a shared URL is handled solely by
+# callbacks/url_callbacks.initialize_from_url (which sets the dataset + the global
+# controls) together with update_data, update_custom_embedding_controls and
+# populate_group_controls -- each reads the same URL state for the controls it owns.
+# The earlier duplicate restore callback that lived here was removed so that no two
+# callbacks write the same control values (which raced and dropped the new
+# expression-by-group / figure / two-gene state).
 
-# Callback to handle cell selection
-@callback(
-    [Output('selection-store', 'data'),
-     Output('selection-info', 'children')],
-    Input('main-plot', 'selectedData'),
-    State('data-store', 'data')
-)
-def update_selection(selected_data, data_store):
-    if not selected_data or not data_store:
-        return None, "No cells selected"
-    
-    points = selected_data.get('points', [])
-    n_selected = len(points)
-    
-    selection_data = {
-        'indices': [p['pointIndex'] for p in points] if points else []
-    }
-    
-    return selection_data, f"Selected {n_selected} cells"
+# NOTE: cell-selection handling (selection-store / selection-info, driven by
+# main-plot.selectedData) lives solely in callbacks/selection_callbacks.py. A
+# duplicate copy here registered a second writer for the same two outputs on the
+# same input; it was removed so there is one authoritative selection callback.
 
 # NOTE: the main-plot figure callback lives in callbacks/main_callbacks.py
 # (update_plot there handles custom embeddings, gene-expression coloring, plot

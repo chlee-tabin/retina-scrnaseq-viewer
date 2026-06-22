@@ -1,5 +1,5 @@
-version: 1.1
-last_updated: "2026-05-26"
+version: 1.2
+last_updated: "2026-05-31"
 
 # Datasets served by the viewer. Paths are resolved relative to DATA_DIR
 # (default "data"); a leading "data/" is stripped and re-joined under DATA_DIR
@@ -20,11 +20,85 @@ datasets:
     default_gene: "FGF8"
     smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
     min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
+    replicate_columns: ["library", "genotype"]  # pseudobulk unit for the group figure (Panel A)
+    gene_modules:              # functional gene groups for the dot-plot module selector
+      NPY system: [NPY, NPY1R, NPY2R, NPY4R, NPY5R, NPY6R]
+      Cell cycle: [MKI67, TOP2A, PCNA, CCND1, CCNB2, CDK1, UBE2C, BIRC5]
+      RPC / progenitor: [FABP7, VSX2, SOX2, SLC1A3, HES5, HES6]
+      Neurogenic onset: [ATOH7, NEUROD1, NEUROD4, NEUROG2, DLL1, OLIG2]
+      HAA / topographic: [FGF8, CYP26C1, CYP26A1, CRABP1, DUSP6, MYOF, BMP2]
+      Dorsoventral anchors: [ALDH1A1, TBX5, TBX3, BAMBI, EPHA7, ALDH1A3, VAX1, EPHB2]
+      Nasotemporal anchors: [FOXG1, HMX1, FOXD1, EPHA3, EPHA8]
     metadata:
       tissue: "Retina"
       organism: "Chick (Gallus gallus)"
       cell_type: "Retinal progenitor cells"
       cells: "29,025"
+      data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Emerson et al.)"
+
+  chick_full:
+    title: "Chick Retina — Full (all cell classes)"
+    description: "85,135 chick (Gallus gallus) embryonic retinal cells spanning all major classes — retinal progenitors (RPC), neurogenic cells, cone photoreceptors, horizontal cells, amacrine subtypes (GABAergic/glycinergic), and retinal ganglion cells, plus vascular/endothelial and interferon-responding cells. Navigable by UMAP (Harmony-integrated). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Emerson et al., GSE142244). Cell-type annotations were vetted with a uniquely-expressed-gene (U-method) specificity analysis and field-grounded horizontal/amacrine separation; cycling precursors are labeled separately. This full object has no inferred DV/NT topographic coordinates -- those apply to the chick RPC dataset."
+    file_path: "data/20260620_chick_full.h5ad"
+    last_updated: "2026-06-20"
+    author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
+    default_gene: "FGF8"
+    default_embedding: "X_umap.harmony"   # no DV/NT scores -> open on the Harmony UMAP
+    # Categorical display: the default cell-type column, its biological (maturation)
+    # order, and a fixed colour per type so EVERY view (UMAP scatter, violin, dot
+    # plot) renders a given cell type with the SAME colour. Edit here to restyle
+    # without touching code; types not listed fall back to the default palette.
+    annotation_column: "annotation_refined"
+    annotation_order:
+      - "RPC"
+      - "Neurogenic"
+      - "HC/AC cycling precursor"
+      - "Horizontal"
+      - "Amacrine (GABAergic)"
+      - "Amacrine (glycinergic)"
+      - "Amacrine"
+      - "Cone"
+      - "Retinal ganglion"
+      - "Interferon-responding"
+      - "Vascular/endothelial"
+    annotation_colors:
+      "RPC": "#4E79A7"
+      "Neurogenic": "#F28E2B"
+      "HC/AC cycling precursor": "#EDC948"
+      "Horizontal": "#59A14F"
+      "Amacrine (GABAergic)": "#B07AA1"
+      "Amacrine (glycinergic)": "#9C755F"
+      "Amacrine": "#FF9DA7"
+      "Cone": "#76B7B2"
+      "Retinal ganglion": "#E15759"
+      "Interferon-responding": "#BAB0AC"
+      "Vascular/endothelial": "#B6992D"
+    # Pseudobulk replicate unit for the "Expression by group" figure (Panel A):
+    # one dot per (cell type x replicate). library x genotype = per-library vireo
+    # demultiplexed donor, matching the manuscript NPY figure.
+    replicate_columns: ["library", "genotype"]
+    # Curated functional gene groups for the "Expression by group" dot-plot module
+    # selector. Genes absent from the dataset are silently skipped. (Clustering-derived
+    # modules can be added here later.)
+    gene_modules:
+      NPY system: [NPY, NPY1R, NPY2R, NPY4R, NPY5R, NPY6R]
+      Cell cycle: [MKI67, TOP2A, PCNA, CCND1, CCNB2, CDK1, UBE2C, BIRC5, CENPA, MCM2]
+      RPC / progenitor: [FABP7, VSX2, SOX2, SLC1A3, HES5, HES6]
+      Neurogenic: [ATOH7, NEUROD1, NEUROD4, NEUROG2, DLL1, DLL3, OLIG2, GADD45A]
+      HAA / topographic: [FGF8, CYP26C1, CYP26A1, CRABP1, DUSP6, SPRY1, MYOF, BMP2]
+      Dorsoventral anchors: [ALDH1A1, TBX5, TBX3, BAMBI, EPHA7, ALDH1A3, VAX1, EPHB2]
+      Nasotemporal anchors: [FOXG1, HMX1, FOXD1, EPHA3, EPHA8]
+      Amacrine (GABA/glycine): [TFAP2A, TFAP2B, GAD1, GAD2, SLC32A1, SLC6A9, PROX1]
+      Photoreceptor / cone: [OTX2, RXRG, THRB, RBP3, RP1]
+      Retinal ganglion: [RBPMS2, POU4F1, POU4F2, ISL1, EBF1]
+      Neuropeptides: [VIP, SST, PENK, TAC1, CARTPT, ADCYAP1, GRP, NMB, PNOC]
+    metadata:
+      tissue: "Retina"
+      organism: "Chick (Gallus gallus)"
+      cell_type: "All retinal cell classes (progenitors + differentiating neurons)"
+      cells: "85,135"
+      navigation: "UMAP (no DV/NT spatial scores; see the chick RPC dataset for topographic coordinates)"
+      annotation: "U-method-vetted; HC/AC split by LHX1+/PROX1+/GAD- field gate"
       data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Emerson et al.)"
 
   human_rpc:
@@ -46,10 +120,28 @@ datasets:
 
   mouse_rpc:
     title: "Mouse Retinal Progenitor Cells"
-    description: "25,202 mouse (Mus musculus) retinal progenitor cells (E13-E16) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE139904 and GSE118614."
+    description: "26,505 mouse (Mus musculus) retinal progenitor cells (E13.5-E16) with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). Re-aligned with Cell Ranger 9.0.1 to the GRCm39-2024-A reference, integrated (Harmony) and subset to RPCs, from 7 publicly available 10x libraries across four GEO series: GSE118614 (Clark et al. 2019; E14, E16), GSE139904 (Balasubramanian et al. 2021; E13.5, control/wild-type cells only), GSE149040 (Wu et al. 2021; E13.5), and GSE122466 (Lo Giudice et al. 2019; E15.5)."
+    file_path: "data/20260528_mouse_RPC_cr9_e13e16.h5ad"
+    last_updated: "2026-05-28"
+    author: "Reprocessed public data (Cell Ranger 9.0.1 / GRCm39): GSE118614, GSE139904, GSE149040, GSE122466"
+    default_gene: "Fgf8"
+    smooth_sigma: 2.0
+    min_cells_per_bin: 5
+    metadata:
+      tissue: "Retina"
+      organism: "Mouse (Mus musculus)"
+      cell_type: "Retinal progenitor cells"
+      developmental_window: "E13.5-E16"
+      cells: "26,505"
+      reference: "Cell Ranger 9.0.1 / refdata-gex-GRCm39-2024-A"
+      data_source: "Reprocessed from GSE118614 (Clark et al.), GSE139904 (Balasubramanian et al., control cells only), GSE149040 (Wu et al.), GSE122466 (Lo Giudice et al.)"
+
+  mouse_rpc_legacy:
+    title: "Mouse Retinal Progenitor Cells (legacy)"
+    description: "LEGACY / SUPERSEDED -- retained only for reproducibility of the originally shared version; use the current 'Mouse Retinal Progenitor Cells' dataset for analysis. 25,202 mouse (Mus musculus) retinal progenitor cells (E13-E16), the original four-library alignment to an older mouse genome reference, reprocessed from GEO GSE139904 and GSE118614. One contributing library (GSE139904) was a pool of wild-type and Fgfr1/2-mutant cells that was not restricted to controls, so this version mixed genotypes. It has been superseded by the de-contaminated CR9 re-alignment above (Cell Ranger 9.0.1 / GRCm39-2024-A), which restricts that library to control cells only."
     file_path: "data/20250604_mouse_RPC.h5ad"
     last_updated: "2025-06-04"
-    author: "Reprocessed public data: GSE139904, GSE118614"
+    author: "Superseded (older reference; includes mixed-genotype cells): GSE139904, GSE118614"
     default_gene: "Fgf8"
     smooth_sigma: 2.0
     min_cells_per_bin: 5
@@ -59,4 +151,5 @@ datasets:
       cell_type: "Retinal progenitor cells"
       developmental_window: "E13-E16"
       cells: "25,202"
-      data_source: "Reprocessed from GSE139904, GSE118614"
+      status: "legacy / superseded by the CR9 (GRCm39) re-alignment"
+      data_source: "Reprocessed from GSE139904, GSE118614 (older reference; pooled wild-type + Fgfr1/2-mutant cells, not control-restricted)"

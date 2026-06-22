@@ -16,22 +16,12 @@ def decode_state(encoded_state):
         return None
 
 def create_share_url(base_url, state_dict):
-    """Create shareable URL with encoded state"""
-    # Add custom embedding parameters if present
-    if state_dict.get('embedding') == 'custom_embedding':
-        state_dict['custom_x'] = state_dict.get('custom_x')
-        state_dict['custom_y'] = state_dict.get('custom_y')
-        state_dict['bins'] = state_dict.get('bins', 50)
-        state_dict['percentile'] = state_dict.get('percentile', 0.95)
-        state_dict['enable_binning'] = state_dict.get('enable_binning', [])
-    else:
-        # Remove custom embedding parameters if not using custom embedding
-        state_dict.pop('custom_x', None)
-        state_dict.pop('custom_y', None)
-        state_dict.pop('bins', None)
-        state_dict.pop('percentile', None)
-        state_dict.pop('enable_binning', None)
-    
+    """Create a shareable URL carrying the full encoded state (base64 JSON).
+
+    The caller (callbacks.url_callbacks.share_url) decides which keys to include;
+    this function no longer strips or derives any of them, so the expression-by-group
+    and figure controls survive the round-trip.
+    """
     encoded_state = encode_state(state_dict)
     return f"{base_url}?state={encoded_state}"
 
@@ -43,5 +33,20 @@ def parse_url_state(url_search):
     params = parse_qs(url_search.lstrip('?'))
     if 'state' not in params:
         return None
-    
-    return decode_state(params['state'][0]) 
+
+    return decode_state(params['state'][0])
+
+
+def state_for_dataset(url_search, dataset_id):
+    """Parse shared-URL state, but only when it belongs to ``dataset_id`` (else None).
+
+    The single seam for the stale-state guard: a ``?state=`` from a different dataset
+    must not re-apply when the user switches datasets (the URL is never cleared). Every
+    restore callback that reads state for an ALREADY-LOADED dataset parses through this
+    rather than bare ``parse_url_state``; only ``initialize_from_url`` (which SETS the
+    dataset, so it has none to compare against) uses the bare parse, by design.
+    """
+    state = parse_url_state(url_search)
+    if state and state.get('dataset') != dataset_id:
+        return None
+    return state
