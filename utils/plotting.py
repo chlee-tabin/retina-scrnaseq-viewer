@@ -631,6 +631,65 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     return fig
 
 
+def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
+                         treat_as_categorical=False, color_map=None, category_order=None):
+    """3D spherical view of the whole-mount map: each cell a point on the unit sphere
+    (utils.wholemount.sphere_coords), the native near-spherical geometry the flat flower
+    projects. A faint reference sphere gives the cap its curvature; captured cells form a
+    polar cap (rho <= ~64-82 deg), so the uncaptured periphery / nasal gap read as empty.
+
+    Colour mirrors create_scatter_plot (categorical -> fixed map + order via the shared
+    helpers; else the viridis continuous scale), so a gene / score / annotation colours
+    identically to the 2D views. Binning and lasso-selection are not (yet) wired for 3D.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+    color = np.asarray(color_series) if color_series is not None else np.zeros(len(x))
+    # Drop cells with no finite sphere coord (no DV/NT score): plotly would skip them, but
+    # dropping keeps the colour array aligned (mirrors the binning helpers' finite mask).
+    finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    x, y, z, color = x[finite], y[finite], z[finite], color[finite]
+    if x.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+
+    label = gene if (color_by == 'gene_expression' and gene) else (color_by or 'value')
+    df = pd.DataFrame({'x': x, 'y': y, 'z': z, 'color': color})
+
+    px_kwargs = dict(labels={'color': label})
+    if treat_as_categorical:
+        df['color'] = df['color'].astype(str)
+        order = _resolve_order(df['color'], category_order=category_order)
+        px_kwargs.update(_categorical_px_kwargs('color', color_map=color_map, order=order))
+    else:
+        px_kwargs['color_continuous_scale'] = 'viridis'
+
+    fig = px.scatter_3d(df, x='x', y='y', z='z', color='color', **px_kwargs)
+    fig.update_traces(marker=dict(size=2.5, opacity=0.85), selector=dict(type='scatter3d'))
+
+    # Faint reference globe so the colored cap reads as a curved surface (no shading/colorbar).
+    u = np.linspace(0, 2 * np.pi, 48)
+    v = np.linspace(0, np.pi, 24)
+    sx = np.outer(np.cos(u), np.sin(v))
+    sy = np.outer(np.sin(u), np.sin(v))
+    sz = np.outer(np.ones_like(u), np.cos(v))
+    fig.add_trace(go.Surface(
+        x=sx, y=sy, z=sz, opacity=0.12, showscale=False, hoverinfo='skip',
+        colorscale=[[0, '#dadada'], [1, '#dadada']],
+        lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)))
+
+    fig.update_layout(
+        title='Whole-mount sphere (3D)',
+        plot_bgcolor='white', height=800, margin=dict(t=60, l=0, r=0, b=0),
+        scene=dict(
+            aspectmode='data',
+            xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
+            camera=dict(eye=dict(x=0.7, y=-1.2, z=1.0)),
+        ),
+    )
+    return fig
+
+
 def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin',
                                  color_map=None, category_order=None, value_is_gene=True):
     """Distribution of one value across the categories of a .obs column.

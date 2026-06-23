@@ -166,7 +166,9 @@ def flower_transform(dv, nt, **p):
             st = st + amp * np.exp(-0.5 * (d / np.deg2rad(wid)) ** 2)
         R = R * st
     X = R * np.cos(phi); Y = R * np.sin(phi)
-    return X, Y, dict(r=r, rho=rho, phi=phi, gore=gore, pole=(dv0, nt0), scale=(sx, sy))
+    # `theta` is the raw azimuth (pre-gore, pre-stretch); `phi` is after the relief gaps.
+    # The sphere view reuses (rho, theta) -- its native, un-ripped geometry (see sphere_coords).
+    return X, Y, dict(r=r, rho=rho, theta=th, phi=phi, gore=gore, pole=(dv0, nt0), scale=(sx, sy))
 
 
 def compute_scale_fit(dv, nt, **p):
@@ -209,6 +211,30 @@ def wholemount_coords(dv, nt, params=None):
     return np.asarray(X, dtype=float), np.asarray(Y, dtype=float)
 
 
+def sphere_coords(dv, nt, params=None):
+    """(DV, NT) score arrays -> (x, y, z) on the UNIT SPHERE: the topographic map on its
+    native (near-spherical) geometry, of which the flat flower is the azimuthal-equidistant
+    projection (display radius = colatitude). The colatitude `rho` (the arcsin-dewarped
+    spherical-cap angle) and azimuth `theta` come straight from flower_transform, so the
+    sphere shares the flower's pole + per-axis scale basis when the same `params` (with a
+    compute_scale_fit) are passed.
+
+    The flat layout's relief cuts / wedge gap / petal stretch are FLATTENING devices for a
+    curved surface (they relieve the curvature deficit); on the sphere there is no deficit,
+    so they are intentionally ignored here -- the surface is continuous and un-ripped.
+
+    Orientation matches the flower: HAA pole at the top (+z, rho=0); nasal -> +x, dorsal ->
+    +y. Cells only reach rho <= rho_max (~64-82 deg), so they cover a polar CAP; the
+    uncaptured periphery and the nasal gap are simply empty sphere (no cell there).
+    """
+    P = dict(LOCKED_PARAMS if params is None else params)
+    _, _, diag = flower_transform(dv, nt, **P)
+    rho = np.asarray(diag['rho'], dtype=float)
+    th = np.asarray(diag['theta'], dtype=float)
+    sin_rho = np.sin(rho)
+    return sin_rho * np.cos(th), sin_rho * np.sin(th), np.cos(rho)
+
+
 def has_scores(obs_columns):
     """True iff both topographic score columns are present (so the projection applies).
 
@@ -217,3 +243,18 @@ def has_scores(obs_columns):
     """
     cols = set(obs_columns) if obs_columns is not None else set()
     return DV_COL in cols and NT_COL in cols
+
+
+if __name__ == "__main__":
+    # ponytail: one runnable check for the sphere geometry (no test framework in this repo).
+    # Run with `python -m utils.wholemount`.
+    dv = np.array([0.0, 1.0, -1.0, 0.5, -0.7, 0.0])
+    nt = np.array([0.0, 0.8, 0.3, -0.6, -0.2, 1.0])
+    x, y, z = sphere_coords(dv, nt)
+    assert np.allclose(x**2 + y**2 + z**2, 1.0), "points must lie on the unit sphere"
+    assert np.allclose([x[0], y[0], z[0]], [0, 0, 1]), "HAA pole (score origin) -> +z top"
+    xn, yn, _ = sphere_coords(np.array([0.0]), np.array([1.0]))   # pure nasal (+NT)
+    assert xn[0] > 0 and abs(yn[0]) < 1e-9, "nasal -> +x (matches flower orientation)"
+    xd, yd, _ = sphere_coords(np.array([1.0]), np.array([0.0]))   # pure dorsal (+DV)
+    assert yd[0] > 0 and abs(xd[0]) < 1e-9, "dorsal -> +y (matches flower orientation)"
+    print("wholemount.sphere_coords self-check OK")

@@ -45,6 +45,7 @@ def create_control_panel():
                                 options=[
                                     {'label': 'Raw axes (X vs Y)', 'value': 'raw'},
                                     {'label': 'Whole-mount (DV/NT flower)', 'value': 'flower'},
+                                    {'label': 'Whole-mount sphere (3D)', 'value': 'sphere'},
                                 ],
                                 value='raw',
                                 className="mb-2",

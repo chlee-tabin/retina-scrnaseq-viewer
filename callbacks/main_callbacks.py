@@ -8,6 +8,7 @@ from utils.plotting import (
     create_dotplot,
     create_dual_gene_figure,
     create_wholemount_binned_figure,
+    create_sphere_figure,
     _message_figure,
 )
 import pandas as pd
@@ -331,15 +332,16 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         # `embedding` stays 'custom_embedding' so the binning logic below is unchanged.
         embedding_label = embedding
         proj_params = None   # whole-mount transform params (None unless the flower view)
+        sphere_xyz = None    # (x, y, z) on the unit sphere when the 3D projection is active
         if embedding == 'custom_embedding':
-            if custom_projection == 'flower':
-                # Whole-mount ("flower") reprojection of the DV/NT topographic scores
-                # (reviewer-response transform). Needs both score columns; datasets
-                # without them (e.g. the full-retina object) get a clear message.
+            if custom_projection in ('flower', 'sphere'):
+                # Whole-mount reprojection of the DV/NT topographic scores: the flat "flower"
+                # or its native 3D sphere. Both need the score columns; datasets without them
+                # (e.g. the full-retina object) get a clear message.
                 if not wholemount.has_scores(adata.obs.columns):
                     return _message_figure(
-                        "Whole-mount projection needs DV.Score and NT.Score, which this "
-                        "dataset doesn't have. It's available for the RPC datasets "
+                        "Whole-mount / sphere projection needs DV.Score and NT.Score, which "
+                        "this dataset doesn't have. It's available for the RPC datasets "
                         "(chick / human / mouse retinal progenitor cells)."
                     )
                 # Advanced-projection controls merged over the reviewer preset (defaults = R2.5).
@@ -350,15 +352,22 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     pole=('median' if wm_pole == 'median' else 'origin'),
                 )
                 # Fit the pole + per-axis scale ONCE from the cells and reuse it for every
-                # warp (scatter cells AND the binned grid), so the two views share one basis
+                # warp (scatter cells AND the binned grid), so the views share one basis
                 # and the layout stays stable under cell subsetting.
                 dv_cells = adata.obs[wholemount.DV_COL].to_numpy()
                 nt_cells = adata.obs[wholemount.NT_COL].to_numpy()
                 proj_params = {**proj_params,
                                **wholemount.compute_scale_fit(dv_cells, nt_cells, **proj_params)}
-                # Per-cell warp (used by the scatter + dual-gene views; the binned view
-                # re-bins in score space below for a stray-free, faithful map).
-                x, y = wholemount.wholemount_coords(dv_cells, nt_cells, params=proj_params)
+                if custom_projection == 'sphere':
+                    # Native 3D geometry: reuse the flower's basis but place cells on the
+                    # unit sphere. Built below (a 3D figure) once the colour series resolves;
+                    # x/y are placeholders for the shared DataFrame / compare guards.
+                    sphere_xyz = wholemount.sphere_coords(dv_cells, nt_cells, params=proj_params)
+                    x, y = sphere_xyz[0], sphere_xyz[1]
+                else:
+                    # Per-cell warp (used by the scatter + dual-gene views; the binned view
+                    # re-bins in score space below for a stray-free, faithful map).
+                    x, y = wholemount.wholemount_coords(dv_cells, nt_cells, params=proj_params)
                 x_label = y_label = ''
                 embedding_label = 'wholemount'
             else:
@@ -385,8 +394,9 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         )
 
         # ---- Two genes side-by-side (map view, gene-expression color) ----
+        # The 3D sphere renders a single variable; skip the (2D) dual-gene comparison there.
         compare_on = _on(compare_genes)
-        if color_by == 'gene_expression' and compare_on and gene and gene2:
+        if color_by == 'gene_expression' and compare_on and gene and gene2 and sphere_xyz is None:
             missing = [g for g in (gene, gene2) if g not in adata.var_names]
             if missing:
                 return _message_figure(
@@ -435,6 +445,18 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 logger.debug(f"Color series dtype: {color_series.dtype}")
                 treat_as_categorical = _is_categorical_series(color_series)
             logger.debug(f"treat_as_categorical: {treat_as_categorical}")
+
+        # ---- 3D spherical whole-mount: the topographic map on its native geometry ----
+        # Renders a complete 3D figure (bypasses the 2D binning/scatter dispatch below).
+        # Colour resolution above is shared; categorical annotation keeps its configured map.
+        if sphere_xyz is not None:
+            s_cmap, s_corder = _annotation_style(data_store, color_by)
+            return create_sphere_figure(
+                sphere_xyz[0], sphere_xyz[1], sphere_xyz[2],
+                color_series, color_by, gene=gene,
+                treat_as_categorical=treat_as_categorical,
+                color_map=s_cmap, category_order=s_corder,
+            )
 
         # Create DataFrame for plotting
         df = pd.DataFrame({
@@ -566,9 +588,9 @@ def toggle_binning_controls(enable_binning):
     Input('custom-projection', 'value')
 )
 def toggle_raw_axes(custom_projection):
-    # The whole-mount projection sources its own coordinates from DV.Score / NT.Score,
-    # so the manual X/Y axis pickers are irrelevant there -- hide them.
-    if custom_projection == 'flower':
+    # The whole-mount projections (flat flower and 3D sphere) source their coordinates from
+    # DV.Score / NT.Score, so the manual X/Y axis pickers are irrelevant there -- hide them.
+    if custom_projection in ('flower', 'sphere'):
         return {'display': 'none'}
     return {'display': 'block'}
 
@@ -578,8 +600,10 @@ def toggle_raw_axes(custom_projection):
     Input('custom-projection', 'value')
 )
 def toggle_wholemount_advanced(custom_projection):
-    # The Advanced-projection sliders only apply to the whole-mount ("flower") view.
-    if custom_projection == 'flower':
+    # The Advanced-projection controls apply to both whole-mount views. On the sphere the
+    # extent / de-warp / pole / symmetric knobs reshape the cap; the relief gap / cuts /
+    # stretch are flat-layout-only and have no effect there (the sphere has no rips).
+    if custom_projection in ('flower', 'sphere'):
         return {'display': 'block'}
     return {'display': 'none'}
 

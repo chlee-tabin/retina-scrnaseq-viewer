@@ -139,7 +139,7 @@ v=2, dataset, embedding, color, gene, mode, plot_type,
 compare_genes, gene2, compare_shared_scale,                       # two-gene
 custom_x, custom_y, bins, percentile, enable_binning,             # map binning
   enable_smoothing, bin_stat,
-custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount flower
+custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount flower / sphere (3D)
   wm_cuts, wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode,
   wm_gap_frac, wm_pole,
 group_by, group_split, group_gene, group_style, gene_module,      # group view
