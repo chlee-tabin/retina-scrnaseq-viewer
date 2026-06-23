@@ -1,11 +1,7 @@
 from dash import Input, Output, State, callback, ctx, no_update
-import json
-import base64
-from urllib.parse import parse_qs, urlencode
 import logging
-import dash
 from utils.error_handling import handle_callback_error, log_callback_info
-from utils.state import create_share_url, parse_url_state, encode_state
+from utils.state import create_share_url, parse_url_state
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +29,12 @@ logger = logging.getLogger(__name__)
      Output('wm-gap', 'value', allow_duplicate=True),
      Output('wm-stretch', 'value', allow_duplicate=True),
      Output('wm-cuts', 'value', allow_duplicate=True),
+     Output('wm-symmetric', 'value', allow_duplicate=True),
+     Output('wm-dewarp', 'value', allow_duplicate=True),
+     Output('wm-pow', 'value', allow_duplicate=True),
+     Output('wm-gap-mode', 'value', allow_duplicate=True),
+     Output('wm-gap-frac', 'value', allow_duplicate=True),
+     Output('wm-pole', 'value', allow_duplicate=True),
      Output('group-value-source', 'value', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
@@ -41,7 +43,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 18
+    n_out = 24
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -68,6 +70,12 @@ def initialize_from_url(search, pathname):
         state.get('wm_gap', no_update),
         state.get('wm_stretch', no_update),
         state.get('wm_cuts', no_update),
+        state.get('wm_symmetric', no_update),
+        state.get('wm_dewarp', no_update),
+        state.get('wm_pow', no_update),
+        state.get('wm_gap_mode', no_update),
+        state.get('wm_gap_frac', no_update),
+        state.get('wm_pole', no_update),
         state.get('group_value_source', no_update),
     )
 
@@ -104,6 +112,12 @@ def initialize_from_url(search, pathname):
      State('wm-gap', 'value'),
      State('wm-stretch', 'value'),
      State('wm-cuts', 'value'),
+     State('wm-symmetric', 'value'),
+     State('wm-dewarp', 'value'),
+     State('wm-pow', 'value'),
+     State('wm-gap-mode', 'value'),
+     State('wm-gap-frac', 'value'),
+     State('wm-pole', 'value'),
      State('group-value-source', 'value'),
      State('group-meta-select', 'value'),
      State('url', 'href')],
@@ -117,6 +131,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               plot_type, group_gene, group_by, group_split, group_style,
               gene_module, group_positive_only, group_replicate,
               wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
+              wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
               group_value_source, group_meta,
               current_url):
     if n_clicks is None:
@@ -156,6 +171,12 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
             state_dict['wm_gap'] = wm_gap
             state_dict['wm_stretch'] = wm_stretch
             state_dict['wm_cuts'] = wm_cuts
+            state_dict['wm_symmetric'] = wm_symmetric
+            state_dict['wm_dewarp'] = wm_dewarp
+            state_dict['wm_pow'] = wm_pow
+            state_dict['wm_gap_mode'] = wm_gap_mode
+            state_dict['wm_gap_frac'] = wm_gap_frac
+            state_dict['wm_pole'] = wm_pole
         state_dict['bins'] = bin_number
         state_dict['percentile'] = percentile
         state_dict['enable_binning'] = enable_binning

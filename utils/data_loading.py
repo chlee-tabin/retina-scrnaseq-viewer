@@ -1,5 +1,5 @@
 import os
-import scanpy as sc
+import anndata as ad
 import logging
 import yaml
 from pathlib import Path
@@ -40,7 +40,7 @@ def load_adata(filename):
         logger.error(f"On-demand provisioning failed for {filename}: {e}")
     resolved = resolve_data_path(filename)
     logger.info(f"Starting to load {resolved}")
-    adata = sc.read_h5ad(resolved)
+    adata = ad.read_h5ad(resolved)
     logger.info(f"Successfully loaded {resolved} with {adata.n_obs} cells")
     return adata
 
@@ -89,3 +89,26 @@ def choose_default_embedding(available_embeddings, obs_columns,
     if umaps:
         return umaps[0]
     return available_embeddings[0] if available_embeddings else 'custom_embedding'
+
+
+def gene_search_options(genes, search_value):
+    """Fuzzy starts-with/contains gene search shared by the gene dropdowns.
+
+    With a search string present, starts-with matches sort ahead of contains matches;
+    otherwise all genes are returned alphabetically. Returns Dash dropdown option dicts.
+    Lives here (a leaf util both callback modules already import) so neither callback
+    module has to import a private helper from the other.
+    """
+    if search_value:
+        sv = search_value.lower()
+        starts_with = []
+        contains = []
+        for gene in genes:
+            gl = gene.lower()
+            if gl.startswith(sv):
+                starts_with.append(gene)
+            elif sv in gl:
+                contains.append(gene)
+        matching = sorted(starts_with) + sorted(contains)
+        return [{'label': g, 'value': g} for g in matching]
+    return [{'label': g, 'value': g} for g in sorted(genes)]

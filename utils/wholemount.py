@@ -15,8 +15,10 @@ Geometric model (verbatim from the source):
     curvature deficit, so the petals separate toward the rim (orange-peel relief).
   - anisotropy: rho_max larger toward NT, so the nasal/temporal petals run longer.
 
-This module contains ONLY the per-cell coordinate transform (a pure function of the two
-score arrays + numpy); the matplotlib binning/rendering in the source script is not
+This module provides the per-cell coordinate transform (flower_transform, a pure function
+of the two score arrays + numpy) plus compute_scale_fit -- a once-per-render fit of the
+pole and per-axis scale FROM THE CELLS, reused across the scatter and binned warps so the
+two views share one basis. The matplotlib binning/rendering in the source script is not
 ported -- the Dash viewer reuses its own binning/smoothing pipeline on the warped (X, Y).
 
 Orientation (FISH flat-mount convention): nasal = right, dorsal = top, temporal = left,
@@ -25,7 +27,8 @@ ventral = bottom; HAA at centre.
 import numpy as np
 import pandas as pd
 
-# Defaults copied verbatim from flower_reproject.DEFAULT_PARAMS.
+# Coordinate-relevant defaults from flower_reproject.DEFAULT_PARAMS (the render-only
+# missing_nasal_* keys are dropped; see the module docstring).
 DEFAULT_PARAMS = dict(
     pole=(0.0, 0.0),               # HAA pole = score origin (balanced D/V & N/T module scores)
     symmetric=True,                # equalize N/T and D/V extents via per-direction scaling
@@ -62,6 +65,8 @@ LOCKED_PARAMS = dict(
 def _resolve_pole(dv, nt, pole):
     if pole == "median":
         return float(np.nanmedian(dv)), float(np.nanmedian(nt))
+    if pole == "origin":
+        return 0.0, 0.0
     return float(pole[0]), float(pole[1])
 
 
@@ -72,14 +77,28 @@ def _resolve_scale(x, y, scale):
     return float(scale[0]), float(scale[1])
 
 
-def _sym_scale(v, q=97.0):
-    """Scale + and - sides independently to their q-th percentile -> ~[-1,1] symmetric.
-    Equalizes opposing petals (e.g. nasal vs temporal) despite asymmetric score ranges."""
+def _sym_factors(v, q=97.0):
+    """Per-side scale factors (sp, sn): the q-th percentile of the positive and the
+    abs-negative values. Exposed so the factors can be computed ONCE from the cells and
+    reused when warping the bin grid -- keeping the scatter and binned views on one basis
+    (see compute_scale_fit)."""
     v = np.asarray(v, float)
     pos = v[v > 0]; neg = -v[v < 0]
     sp = (float(np.nanpercentile(pos, q)) if pos.size else 1.0) or 1.0
     sn = (float(np.nanpercentile(neg, q)) if neg.size else 1.0) or 1.0
+    return sp, sn
+
+
+def _apply_sym(v, sp, sn):
+    """Apply per-side factors: positives / sp, abs-negatives / sn -> ~[-1, 1]."""
+    v = np.asarray(v, float)
     return np.where(v >= 0, v / sp, v / sn)
+
+
+def _sym_scale(v, q=97.0):
+    """Scale + and - sides independently to their q-th percentile -> ~[-1,1] symmetric.
+    Equalizes opposing petals (e.g. nasal vs temporal) despite asymmetric score ranges."""
+    return _apply_sym(v, *_sym_factors(v, q))
 
 
 def flower_transform(dv, nt, **p):
@@ -90,7 +109,14 @@ def flower_transform(dv, nt, **p):
     x = nt - nt0          # NT -> horizontal (nasal +x, right)
     y = dv - dv0          # DV -> vertical   (dorsal +y, up)
     if P.get("symmetric", True):
-        xs, ys = _sym_scale(x), _sym_scale(y)
+        # Reuse cell-derived per-side factors when injected (compute_scale_fit), so the
+        # bin-grid warp shares the cells' basis; otherwise fit to this array.
+        sf = P.get("sym_factors")
+        if sf is not None:
+            (spx, snx), (spy, sny) = sf
+            xs, ys = _apply_sym(x, spx, snx), _apply_sym(y, spy, sny)
+        else:
+            xs, ys = _sym_scale(x), _sym_scale(y)
         sx = sy = None
     else:
         sx, sy = _resolve_scale(x, y, P["scale"])
@@ -141,6 +167,28 @@ def flower_transform(dv, nt, **p):
         R = R * st
     X = R * np.cos(phi); Y = R * np.sin(phi)
     return X, Y, dict(r=r, rho=rho, phi=phi, gore=gore, pole=(dv0, nt0), scale=(sx, sy))
+
+
+def compute_scale_fit(dv, nt, **p):
+    """Pole + per-axis scale derived ONCE from the cells, to be merged into the params and
+    reused for every flower_transform call (the cells AND the bin-grid vertices/centres), so
+    the scatter and binned whole-mount share one basis and the layout is stable under cell
+    subsetting. Returns a dict to splat into the flower_transform kwargs.
+
+    Without this, each call re-fits its scale to whatever array it receives -- the cells for
+    the scatter, the regular grid for the binned map -- so the two views' petals diverge.
+    """
+    P = {**DEFAULT_PARAMS, **p}
+    dv = np.asarray(dv, float); nt = np.asarray(nt, float)
+    dv0, nt0 = _resolve_pole(dv, nt, P["pole"])
+    x = nt - nt0
+    y = dv - dv0
+    fit = {"pole": (dv0, nt0)}
+    if P.get("symmetric", True):
+        fit["sym_factors"] = (_sym_factors(x), _sym_factors(y))
+    else:
+        fit["scale"] = _resolve_scale(x, y, P["scale"])
+    return fit
 
 
 # Default obs column names carrying the topographic scores (consistent across the

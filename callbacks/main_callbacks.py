@@ -1,47 +1,25 @@
 from dash import Input, Output, State, callback
-import json
-import base64
-from urllib.parse import parse_qs, urlencode
-from utils.data_loading import load_adata, load_dataset_config
+from utils.data_loading import load_adata, load_dataset_config, gene_search_options
 from utils.plotting import (
     create_scatter_plot,
-    create_metacell_plot,
     create_binned_plot,
     create_group_expression_plot,
     create_group_expression_figure,
     create_dotplot,
     create_dual_gene_figure,
     create_wholemount_binned_figure,
+    _message_figure,
 )
 import pandas as pd
 import logging
-from utils.processing import create_metacells, calculate_selection_stats
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import state_for_dataset
 from utils import wholemount
 import scipy.sparse
 import numpy as np
 import traceback
-import plotly.graph_objects as go
 
 logger = logging.getLogger(__name__)
-
-
-def _message_figure(text):
-    """Return an empty plot displaying a centered, user-friendly message."""
-    fig = go.Figure()
-    fig.add_annotation(
-        text=text,
-        xref="paper", yref="paper",
-        x=0.5, y=0.5, showarrow=False,
-        font=dict(size=16, color="#666")
-    )
-    fig.update_layout(
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        plot_bgcolor="white"
-    )
-    return fig
 
 
 def _gene_vector(adata, gene):
@@ -141,8 +119,10 @@ def _is_categorical_series(series):
     )
 
 
-def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts):
-    """Merge the Advanced-projection slider values over the shipped reviewer preset
+def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
+                       symmetric=None, dewarp=None, pow_p=None,
+                       gap_mode=None, gap_frac=None, pole=None):
+    """Merge the Advanced-projection control values over the shipped reviewer preset
     (wholemount.LOCKED_PARAMS) into a params dict for flower_transform. None values keep
     the preset, so the defaults reproduce Fig R2.5 exactly."""
     P = dict(wholemount.LOCKED_PARAMS)
@@ -162,6 +142,20 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts):
     if n_cuts is not None:
         k = int(n_cuts)
         P['cut_angles_deg'] = tuple(i * 360.0 / k for i in range(k)) if k > 0 else ()
+    # Knobs not pinned by LOCKED_PARAMS (they inherit DEFAULT_PARAMS): exposed so the user
+    # can explore them. Each stays at the R2.5 value unless its control overrides it.
+    if symmetric is not None:
+        P['symmetric'] = bool(symmetric)   # False -> p99 per-axis scaling (true asymmetry)
+    if dewarp is not None:
+        P['dewarp'] = dewarp               # 'arcsin' (R2.5) | 'pow' | 'none'
+    if pow_p is not None:
+        P['pow_p'] = float(pow_p)          # exponent for dewarp='pow'
+    if gap_mode is not None:
+        P['gap_mode'] = gap_mode           # 'deficit' (R2.5) | 'linear'
+    if gap_frac is not None:
+        P['gap_frac'] = float(gap_frac)    # rip width for gap_mode='linear'
+    if pole is not None:
+        P['pole'] = pole                   # 'origin' (R2.5) | 'median'
     return P
 
 
@@ -201,7 +195,13 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts):
      Input('wm-stretch', 'value'),
      Input('wm-cuts', 'value'),
      Input('group-value-source', 'value'),
-     Input('group-meta-select', 'value')],
+     Input('group-meta-select', 'value'),
+     Input('wm-symmetric', 'value'),
+     Input('wm-dewarp', 'value'),
+     Input('wm-pow', 'value'),
+     Input('wm-gap-mode', 'value'),
+     Input('wm-gap-frac', 'value'),
+     Input('wm-pole', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
@@ -212,7 +212,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 gene_module, compare_genes, gene2, bin_stat,
                 group_positive_only, group_replicate, compare_shared_scale,
                 custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
-                group_value_source, group_meta):
+                group_value_source, group_meta,
+                wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole):
     logger.debug("update_plot called with parameters:")
 
     # Initialize treat_as_categorical as False by default
@@ -341,15 +342,23 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                         "dataset doesn't have. It's available for the RPC datasets "
                         "(chick / human / mouse retinal progenitor cells)."
                     )
-                # Advanced-projection sliders merged over the reviewer preset.
-                proj_params = _wholemount_params(wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts)
+                # Advanced-projection controls merged over the reviewer preset (defaults = R2.5).
+                proj_params = _wholemount_params(
+                    wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
+                    symmetric=_on(wm_symmetric), dewarp=wm_dewarp, pow_p=wm_pow,
+                    gap_mode=wm_gap_mode, gap_frac=wm_gap_frac,
+                    pole=('median' if wm_pole == 'median' else 'origin'),
+                )
+                # Fit the pole + per-axis scale ONCE from the cells and reuse it for every
+                # warp (scatter cells AND the binned grid), so the two views share one basis
+                # and the layout stays stable under cell subsetting.
+                dv_cells = adata.obs[wholemount.DV_COL].to_numpy()
+                nt_cells = adata.obs[wholemount.NT_COL].to_numpy()
+                proj_params = {**proj_params,
+                               **wholemount.compute_scale_fit(dv_cells, nt_cells, **proj_params)}
                 # Per-cell warp (used by the scatter + dual-gene views; the binned view
                 # re-bins in score space below for a stray-free, faithful map).
-                x, y = wholemount.wholemount_coords(
-                    adata.obs[wholemount.DV_COL].to_numpy(),
-                    adata.obs[wholemount.NT_COL].to_numpy(),
-                    params=proj_params,
-                )
+                x, y = wholemount.wholemount_coords(dv_cells, nt_cells, params=proj_params)
                 x_label = y_label = ''
                 embedding_label = 'wholemount'
             else:
@@ -446,8 +455,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 base = gene if color_by == 'gene_expression' else str(color_by)
                 cl = f"{base} (% detected)" if bin_stat == 'frac_pos' else base
                 fig = create_wholemount_binned_figure(
-                    adata.obs[wholemount.DV_COL].to_numpy(),
-                    adata.obs[wholemount.NT_COL].to_numpy(),
+                    dv_cells,
+                    nt_cells,
                     np.asarray(color_series, dtype=float),
                     bin_size=bin_number,
                     percentile=percentile,
@@ -794,7 +803,7 @@ def populate_group_controls(data_store, url_search, group_value_source):
 def update_group_gene_select(data_store, search_value):
     if not data_store or 'genes' not in data_store:
         return []
-    return _gene_search_options(data_store['genes'], search_value)
+    return gene_search_options(data_store['genes'], search_value)
 
 
 # ---- F4: show/hide the second-gene dropdown ----
@@ -820,26 +829,4 @@ def toggle_compare_genes(compare_genes):
 def update_gene_select_2(data_store, search_value):
     if not data_store or 'genes' not in data_store:
         return []
-    return _gene_search_options(data_store['genes'], search_value)
-
-
-def _gene_search_options(genes, search_value):
-    """Fuzzy starts-with/contains gene search shared by the extra gene dropdowns.
-
-    Mirrors the logic in callbacks.dataset_callbacks.update_gene_select: when a
-    search string is present, starts-with matches sort ahead of contains
-    matches; otherwise all genes are returned alphabetically.
-    """
-    if search_value:
-        sv = search_value.lower()
-        starts_with = []
-        contains = []
-        for gene in genes:
-            gl = gene.lower()
-            if gl.startswith(sv):
-                starts_with.append(gene)
-            elif sv in gl:
-                contains.append(gene)
-        matching = sorted(starts_with) + sorted(contains)
-        return [{'label': g, 'value': g} for g in matching]
-    return [{'label': g, 'value': g} for g in sorted(genes)]
+    return gene_search_options(data_store['genes'], search_value)

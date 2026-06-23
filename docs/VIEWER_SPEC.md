@@ -51,6 +51,10 @@ Two top-level views, switched by **View** (`plot-type`):
 | `group-positive-only` | group (figure) | Violin uses only cells with expr > 0 |
 | `group-replicate-select` | group (figure) | Pseudobulk replicate unit (Panel A) |
 | `gene-module-select` | group (dotplot) | Gene set for the dot plot |
+| `group-value-source` / `group-meta-select` | group | Plot value: gene expression vs a continuous `.obs` variable |
+| `custom-projection` | map (custom) | Raw axes vs whole-mount (DV/NT flower) |
+| `wm-rho-nt` / `wm-rho-dv` / `wm-gap` / `wm-stretch` / `wm-cuts` | map (flower) | Flower extent, relief width, petal stretch, number of cuts |
+| `wm-symmetric` / `wm-pole` / `wm-dewarp` / `wm-pow` / `wm-gap-mode` / `wm-gap-frac` | map (flower) | Advanced flower geometry (defaults reproduce Fig R2.5) |
 
 Style-specific group controls are revealed by `group-style`: the figure controls
 show only for `figure`, the module selector only for `dotplot`.
@@ -120,7 +124,8 @@ the per-cell violin panel is drawn.
 ## Dot plot
 
 Gene set (rows) × groups (columns). Dot **size** = fraction of cells with expr > 0;
-dot **colour** = mean expression over all cells in the group (scanpy convention). The
+dot **colour** = mean expression over all cells in the group (the standard dot-plot
+convention). The
 x-axis follows `annotation_order`. A default module is preselected so the dot plot
 renders immediately when chosen.
 
@@ -134,8 +139,11 @@ v=2, dataset, embedding, color, gene, mode, plot_type,
 compare_genes, gene2, compare_shared_scale,                       # two-gene
 custom_x, custom_y, bins, percentile, enable_binning,             # map binning
   enable_smoothing, bin_stat,
+custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount flower
+  wm_cuts, wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode,
+  wm_gap_frac, wm_pole,
 group_by, group_split, group_gene, group_style, gene_module,      # group view
-  group_positive_only, group_replicate
+  group_positive_only, group_replicate, group_value_source, group_meta
 ```
 
 **Restoration ownership** (each control is written by exactly one restore-capable

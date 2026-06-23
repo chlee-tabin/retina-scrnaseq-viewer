@@ -1,19 +1,9 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback, ClientsideFunction
+from dash import html, dcc, Input, Output, State, callback
 import dash_bootstrap_components as dbc
-import plotly.express as px
-import scanpy as sc
 import numpy as np
 import pandas as pd
-from urllib.parse import urlparse, parse_qs, urlencode
-import json
-from functools import lru_cache
 import logging
-import base64
-import io
-import yaml
-from datetime import datetime
-from pathlib import Path
 import time
 import argparse
 from flask import send_file
@@ -34,11 +24,9 @@ from callbacks.status_callbacks import *
 
 # Import utilities
 from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding
-from utils.config import load_config
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import state_for_dataset
 from components.status_bar import create_status_bar
-from utils.plotting import create_scatter_plot, create_metacell_plot
 
 # Add command line argument parsing. Use parse_known_args (not parse_args) so that
 # importing this module under gunicorn -- where sys.argv carries gunicorn's own flags
@@ -92,41 +80,6 @@ app = dash.Dash(
 app.title = "Single-cell Data Viewer"  # Set the title for the browser tab
 server = app.server
 
-# Load configuration
-config = load_config()
-
-# Function to create 2D histogram (metacells) with improved binning and aggregation
-def create_metacells(x, y, values=None, n_bins=50):
-    H, xedges, yedges = np.histogram2d(x, y, bins=n_bins)
-    
-    if values is not None:
-        H_values = np.zeros_like(H)
-        H_counts = np.zeros_like(H)
-        
-        x_indices = np.digitize(x, xedges) - 1
-        y_indices = np.digitize(y, yedges) - 1
-        
-        # Filter out points outside the bins
-        mask = (x_indices >= 0) & (x_indices < H.shape[0]) & \
-               (y_indices >= 0) & (y_indices < H.shape[1])
-        
-        x_indices = x_indices[mask]
-        y_indices = y_indices[mask]
-        values_masked = values[mask] if values is not None else None
-        
-        # Use numpy's add.at for efficient binning
-        if values_masked is not None:
-            np.add.at(H_values, (x_indices, y_indices), values_masked)
-            np.add.at(H_counts, (x_indices, y_indices), 1)
-            
-        # Avoid division by zero
-        mask = H_counts > 0
-        H_values[mask] = H_values[mask] / H_counts[mask]
-        
-        return H_values, xedges, yedges
-    return H, xedges, yedges
-
-
 def _detect_cp_target(adata, n_sample=256):
     """Detect the counts-per-X normalisation target of a log1p-normalised ``.X``.
 
@@ -171,8 +124,6 @@ app.layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     dcc.Store(id='data-store'),
     dcc.Store(id='selection-store'),
-    dcc.Store(id='url-parameters'),
-    dcc.Store(id='initial-load-flag', data=True),
     dcc.Store(id='session-id', data=str(time.time())),
     
     # Add interval component here
