@@ -344,6 +344,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 df, embedding, color_by,
                 treat_as_categorical=treat_as_categorical,
                 color_map=s_cmap, category_order=s_corder,
+                plot_order=(viz_mode or 'random'),
             )
 
         return fig

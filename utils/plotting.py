@@ -84,8 +84,40 @@ def _categorical_px_kwargs(col_name, color_map=None, order=None):
     return kw
 
 
+def _plot_order_perm(values, plot_order, treat_as_categorical):
+    """Row permutation implementing the sidebar 'Plot Order' control for a scatter.
+
+    Plotly draws points in data order, so the LAST point is on top. Hence:
+      'ordered_asc'  -> sort ascending by value: the HIGHEST values are drawn last (on
+                        top). The useful default for a sparse gene (e.g. NPY) -- the few
+                        positive cells sit above the many zero cells instead of being
+                        buried under them.
+      'ordered_desc' -> sort descending: the lowest values are drawn on top.
+      'random'       -> deterministic shuffle (FIXED seed) so points don't re-jump on
+                        every unrelated callback, while still breaking the
+                        acquisition-order occlusion of the raw cell order.
+    Any other value (or <=1 point) -> identity (original order).
+
+    For categorical colour the sort key is the string label; for continuous colour it is
+    the numeric value (non-numeric/NaN coerced, sorted to the end of the ascending order).
+    """
+    n = len(values)
+    if n <= 1 or plot_order not in ('ordered_asc', 'ordered_desc', 'random'):
+        return np.arange(n)
+    if plot_order == 'random':
+        return np.random.RandomState(0).permutation(n)
+    if treat_as_categorical:
+        keys = pd.Series(values).astype(str).to_numpy()
+    else:
+        keys = pd.to_numeric(pd.Series(values), errors='coerce').to_numpy()
+    perm = np.argsort(keys, kind='stable')
+    if plot_order == 'ordered_desc':
+        perm = perm[::-1]
+    return perm
+
+
 def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, selection_data=None,
-                        color_map=None, category_order=None):
+                        color_map=None, category_order=None, plot_order='random'):
     """
     Create a scatter plot with proper styling based on embedding type
     
@@ -109,6 +141,10 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
         x_label = f'{embedding}_1'
         y_label = f'{embedding}_2'
     
+    # Plot Order: a row permutation drawn on top last (computed on the ORIGINAL colour
+    # values, before any categorical string-cast below).
+    perm = _plot_order_perm(df['color'].to_numpy(), plot_order, treat_as_categorical)
+
     px_kwargs = dict(
         labels={'x': x_label, 'y': y_label, 'color': color_by},
         title=f'Single-cell visualization - {embedding}',
@@ -121,6 +157,10 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
         px_kwargs.update(_categorical_px_kwargs('color', color_map=color_map, order=order))
     else:
         px_kwargs['color_continuous_scale'] = 'viridis'
+
+    # Apply the Plot Order (no-op when perm is the identity). iloc keeps the colour/x/y
+    # rows aligned; px.scatter then draws in this new order.
+    df = df.iloc[perm]
 
     fig = px.scatter(df, x='x', y='y', color='color', **px_kwargs)
     
@@ -151,14 +191,21 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
             )
         )
     
-    # Update selection styling if provided
+    # Update selection styling if provided. Selection indices reference the ORIGINAL
+    # cell order (pointIndex into the un-reordered data), so map them through `perm` to
+    # the post-Plot-Order trace positions, keeping the highlight on the right cells.
     if selection_data and selection_data.get('indices'):
+        inv = np.empty(len(perm), dtype=np.int64)
+        inv[perm] = np.arange(len(perm))
+        n = len(inv)
+        sel = [int(inv[i]) for i in selection_data['indices']
+               if isinstance(i, (int, np.integer)) and 0 <= i < n]
         fig.update_traces(
-            selectedpoints=selection_data['indices'],
+            selectedpoints=sel,
             selected=dict(marker=dict(opacity=1)),
             unselected=dict(marker=dict(opacity=0.1))
         )
-    
+
     return fig
 
 def create_metacell_plot(H, xedges, yedges, embedding):
@@ -362,6 +409,12 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             zmax=color_vmax,
             aspect='equal'
         )
+
+        # '% detected' is stored as a fraction in [0, 1]; render the colorbar ticks as
+        # percentages (e.g. 0.2 -> "20%") so the scale matches the "(% detected)" label
+        # and the hover read-out instead of showing bare fractions.
+        if is_pct:
+            fig.update_coloraxes(colorbar=dict(tickformat='.0%'))
 
         # Create hover data with bin indices and cell counts
         hover_text = [[
@@ -699,7 +752,9 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
                     hoverongaps=False,
                     showscale=(idx == 1) if shared_scale else True,
                     colorbar=dict(title=_dual_colorbar_title(names[idx], shared_scale, is_pct),
-                                  x=cbx[idx], len=1.0, thickness=12),
+                                  x=cbx[idx], len=1.0, thickness=12,
+                                  # fraction [0,1] -> percentage ticks for the % detected map
+                                  tickformat='.0%' if is_pct else None),
                 ),
                 row=1, col=idx + 1,
             )
