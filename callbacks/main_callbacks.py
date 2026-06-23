@@ -11,12 +11,14 @@ from utils.plotting import (
     create_group_expression_figure,
     create_dotplot,
     create_dual_gene_figure,
+    create_wholemount_binned_figure,
 )
 import pandas as pd
 import logging
 from utils.processing import create_metacells, calculate_selection_stats
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import state_for_dataset
+from utils import wholemount
 import scipy.sparse
 import numpy as np
 import traceback
@@ -116,6 +118,30 @@ def _is_categorical_series(series):
     )
 
 
+def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts):
+    """Merge the Advanced-projection slider values over the shipped reviewer preset
+    (wholemount.LOCKED_PARAMS) into a params dict for flower_transform. None values keep
+    the preset, so the defaults reproduce Fig R2.5 exactly."""
+    P = dict(wholemount.LOCKED_PARAMS)
+    if rho_nt is not None:
+        P['rho_max_nt_deg'] = float(rho_nt)
+    if rho_dv is not None:
+        P['rho_max_dv_deg'] = float(rho_dv)
+    if gap_gain is not None:
+        P['gap_gain'] = float(gap_gain)
+    # Scale the locked directional stretch bumps (temporal / ventro-temporal / dorso-nasal)
+    # by the slider; 0 -> no anatomical stretch, 1 -> the shipped amounts.
+    if stretch_scale is not None:
+        s = float(stretch_scale)
+        P['stretch_bumps'] = tuple((ang, amp * s, wid)
+                                   for (ang, amp, wid) in wholemount.LOCKED_PARAMS['stretch_bumps'])
+    # Evenly spaced relief cuts; 0 -> a solid disk (no slits).
+    if n_cuts is not None:
+        k = int(n_cuts)
+        P['cut_angles_deg'] = tuple(i * 360.0 / k for i in range(k)) if k > 0 else ()
+    return P
+
+
 @callback(
     Output('main-plot', 'figure', allow_duplicate=True),
     [Input('data-store', 'data'),
@@ -144,7 +170,13 @@ def _is_categorical_series(series):
      Input('bin-stat', 'value'),
      Input('group-positive-only', 'value'),
      Input('group-replicate-select', 'value'),
-     Input('compare-shared-scale', 'value')],
+     Input('compare-shared-scale', 'value'),
+     Input('custom-projection', 'value'),
+     Input('wm-rho-nt', 'value'),
+     Input('wm-rho-dv', 'value'),
+     Input('wm-gap', 'value'),
+     Input('wm-stretch', 'value'),
+     Input('wm-cuts', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
@@ -153,7 +185,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 bin_number, percentile, enable_binning, enable_smoothing, selection_data,
                 url_search, plot_type, group_gene, group_by, group_split, group_style,
                 gene_module, compare_genes, gene2, bin_stat,
-                group_positive_only, group_replicate, compare_shared_scale):
+                group_positive_only, group_replicate, compare_shared_scale,
+                custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts):
     logger.debug("update_plot called with parameters:")
 
     # Initialize treat_as_categorical as False by default
@@ -239,14 +272,41 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         if not embedding:
             return {}
 
-        # Get coordinates based on embedding type
+        # Get coordinates based on embedding type. `embedding_label` is the string the
+        # plotting helpers use for axis labels + styling; it diverges from `embedding`
+        # only for the whole-mount projection (a 'wholemount' styling token), while
+        # `embedding` stays 'custom_embedding' so the binning logic below is unchanged.
+        embedding_label = embedding
+        proj_params = None   # whole-mount transform params (None unless the flower view)
         if embedding == 'custom_embedding':
-            if not custom_x or not custom_y:
-                return {}
-            x = adata.obs[custom_x]
-            y = adata.obs[custom_y]
-            x_label = custom_x
-            y_label = custom_y
+            if custom_projection == 'flower':
+                # Whole-mount ("flower") reprojection of the DV/NT topographic scores
+                # (reviewer-response transform). Needs both score columns; datasets
+                # without them (e.g. the full-retina object) get a clear message.
+                if not wholemount.has_scores(adata.obs.columns):
+                    return _message_figure(
+                        "Whole-mount projection needs DV.Score and NT.Score, which this "
+                        "dataset doesn't have. It's available for the RPC datasets "
+                        "(chick / human / mouse retinal progenitor cells)."
+                    )
+                # Advanced-projection sliders merged over the reviewer preset.
+                proj_params = _wholemount_params(wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts)
+                # Per-cell warp (used by the scatter + dual-gene views; the binned view
+                # re-bins in score space below for a stray-free, faithful map).
+                x, y = wholemount.wholemount_coords(
+                    adata.obs[wholemount.DV_COL].to_numpy(),
+                    adata.obs[wholemount.NT_COL].to_numpy(),
+                    params=proj_params,
+                )
+                x_label = y_label = ''
+                embedding_label = 'wholemount'
+            else:
+                if not custom_x or not custom_y:
+                    return {}
+                x = adata.obs[custom_x]
+                y = adata.obs[custom_y]
+                x_label = custom_x
+                y_label = custom_y
         else:
             coordinates = adata.obsm[embedding]
             x = coordinates[:, 0]
@@ -278,7 +338,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 np.asarray(x), np.asarray(y),
                 [_gene_vector(adata, gene), _gene_vector(adata, gene2)],
                 [gene, gene2],
-                embedding,
+                embedding_label,
                 binned=binning_on,
                 bin_size=bin_number,
                 percentile=percentile,
@@ -328,20 +388,39 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
             smooth_on = _on(enable_smoothing)
             smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
             min_cells = data_store.get('min_cells_per_bin', 1)
-            fig = create_binned_plot(
-                df, embedding, color_by,
-                bin_size=bin_number,
-                percentile=percentile,
-                treat_as_categorical=treat_as_categorical,
-                smooth_sigma=smooth_sigma,
-                min_cells=min_cells,
-                color_floor=data_store.get('color_floor', 0.05),
-                bin_stat=(bin_stat or 'mean'),
-            )
+            if custom_projection == 'flower' and not treat_as_categorical and color_series is not None:
+                # Faithful whole-mount: bin in DV/NT SCORE space, warp, drop strays --
+                # instead of histogramming the warped per-cell coordinates.
+                base = gene if color_by == 'gene_expression' else str(color_by)
+                cl = f"{base} (% detected)" if bin_stat == 'frac_pos' else base
+                fig = create_wholemount_binned_figure(
+                    adata.obs[wholemount.DV_COL].to_numpy(),
+                    adata.obs[wholemount.NT_COL].to_numpy(),
+                    np.asarray(color_series, dtype=float),
+                    bin_size=bin_number,
+                    percentile=percentile,
+                    smooth_sigma=smooth_sigma,
+                    min_cells=min_cells,
+                    color_floor=data_store.get('color_floor', 0.05),
+                    bin_stat=(bin_stat or 'mean'),
+                    color_label=cl,
+                    params=proj_params,
+                )
+            else:
+                fig = create_binned_plot(
+                    df, embedding_label, color_by,
+                    bin_size=bin_number,
+                    percentile=percentile,
+                    treat_as_categorical=treat_as_categorical,
+                    smooth_sigma=smooth_sigma,
+                    min_cells=min_cells,
+                    color_floor=data_store.get('color_floor', 0.05),
+                    bin_stat=(bin_stat or 'mean'),
+                )
         else:
             s_cmap, s_corder = _annotation_style(data_store, color_by)
             fig = create_scatter_plot(
-                df, embedding, color_by,
+                df, embedding_label, color_by,
                 treat_as_categorical=treat_as_categorical,
                 color_map=s_cmap, category_order=s_corder,
                 plot_order=(viz_mode or 'random'),
@@ -417,6 +496,29 @@ def toggle_plot_order(embedding, enable_binning):
 )
 def toggle_binning_controls(enable_binning):
     if _on(enable_binning):
+        return {'display': 'block'}
+    return {'display': 'none'}
+
+
+@callback(
+    Output('raw-axes-controls', 'style'),
+    Input('custom-projection', 'value')
+)
+def toggle_raw_axes(custom_projection):
+    # The whole-mount projection sources its own coordinates from DV.Score / NT.Score,
+    # so the manual X/Y axis pickers are irrelevant there -- hide them.
+    if custom_projection == 'flower':
+        return {'display': 'none'}
+    return {'display': 'block'}
+
+
+@callback(
+    Output('wholemount-advanced', 'style'),
+    Input('custom-projection', 'value')
+)
+def toggle_wholemount_advanced(custom_projection):
+    # The Advanced-projection sliders only apply to the whole-mount ("flower") view.
+    if custom_projection == 'flower':
         return {'display': 'block'}
     return {'display': 'none'}
 

@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
      Output('plot-type', 'value', allow_duplicate=True),
      Output('compare-genes', 'value', allow_duplicate=True),
      Output('gene-select-2', 'value', allow_duplicate=True),
-     Output('compare-shared-scale', 'value', allow_duplicate=True)],
+     Output('compare-shared-scale', 'value', allow_duplicate=True),
+     Output('custom-projection', 'value', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     prevent_initial_call='initial_duplicate'
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 11
+    n_out = 12
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -55,6 +56,7 @@ def initialize_from_url(search, pathname):
         state.get('compare_genes', no_update),
         state.get('gene2', no_update),
         state.get('compare_shared_scale', no_update),
+        state.get('custom_projection', 'raw'),
     )
 
 @callback(
@@ -68,6 +70,7 @@ def initialize_from_url(search, pathname):
      State('viz-mode', 'value'),
      State('custom-x-select', 'value'),
      State('custom-y-select', 'value'),
+     State('custom-projection', 'value'),
      State('bin-number-slider', 'value'),
      State('percentile-slider', 'value'),
      State('enable-binning', 'value'),
@@ -90,7 +93,7 @@ def initialize_from_url(search, pathname):
 @handle_callback_error
 @log_callback_info
 def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
-              custom_x, custom_y, bin_number, percentile, enable_binning,
+              custom_x, custom_y, custom_projection, bin_number, percentile, enable_binning,
               enable_smoothing, bin_stat, compare_genes, gene2, compare_shared_scale,
               plot_type, group_gene, group_by, group_split, group_style,
               gene_module, group_positive_only, group_replicate,
@@ -124,6 +127,8 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
     if embedding == 'custom_embedding':
         state_dict['custom_x'] = custom_x
         state_dict['custom_y'] = custom_y
+        if custom_projection and custom_projection != 'raw':
+            state_dict['custom_projection'] = custom_projection
         state_dict['bins'] = bin_number
         state_dict['percentile'] = percentile
         state_dict['enable_binning'] = enable_binning

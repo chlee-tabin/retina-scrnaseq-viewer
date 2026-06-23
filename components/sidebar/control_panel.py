@@ -37,16 +37,67 @@ def create_control_panel():
                     dbc.Card([
                         dbc.CardBody([
                             html.H6("Custom Embedding Controls", className="card-subtitle mb-2 text-muted"),
-                            html.Label("X-axis:", className="mt-2"),
-                            dcc.Dropdown(
-                                id='custom-x-select',
-                                placeholder="Select X-axis metric"
+
+                            # Projection of the topographic scores: the raw X-vs-Y plane,
+                            # or the whole-mount ("flower") reprojection that warps the flat
+                            # DV/NT plane into a flat-mounted retina (reviewer-response
+                            # transform; needs DV.Score + NT.Score).
+                            html.Label("Projection:", className="mt-2"),
+                            dcc.RadioItems(
+                                id='custom-projection',
+                                options=[
+                                    {'label': 'Raw axes (X vs Y)', 'value': 'raw'},
+                                    {'label': 'Whole-mount (DV/NT flower)', 'value': 'flower'},
+                                ],
+                                value='raw',
+                                className="mb-2",
+                                labelStyle={'display': 'block'},
                             ),
-                            html.Label("Y-axis:", className="mt-2"),
-                            dcc.Dropdown(
-                                id='custom-y-select',
-                                placeholder="Select Y-axis metric"
-                            ),
+
+                            # Raw-axis pickers, hidden under the whole-mount projection
+                            # (which derives its coordinates from DV.Score / NT.Score).
+                            html.Div([
+                                html.Label("X-axis:", className="mt-2"),
+                                dcc.Dropdown(
+                                    id='custom-x-select',
+                                    placeholder="Select X-axis metric"
+                                ),
+                                html.Label("Y-axis:", className="mt-2"),
+                                dcc.Dropdown(
+                                    id='custom-y-select',
+                                    placeholder="Select Y-axis metric"
+                                ),
+                            ], id='raw-axes-controls'),
+
+                            # Advanced whole-mount projection parameters (shown only under
+                            # the flower projection). Defaults reproduce the shipped
+                            # reviewer figure; every knob feeds wholemount.flower_transform.
+                            html.Div([
+                                html.Hr(className="my-2"),
+                                html.Label("Advanced projection", className="fw-semibold small"),
+                                html.Label("Nasotemporal extent (deg):", className="mt-1 small"),
+                                dcc.Slider(id='wm-rho-nt', min=40, max=110, step=1, value=82,
+                                           marks={40: '40', 82: '82', 110: '110'},
+                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+                                html.Label("Dorsoventral extent (deg):", className="mt-2 small"),
+                                dcc.Slider(id='wm-rho-dv', min=40, max=110, step=1, value=64,
+                                           marks={40: '40', 64: '64', 110: '110'},
+                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+                                html.Label("Relief gap (rip width):", className="mt-2 small"),
+                                dcc.Slider(id='wm-gap', min=0, max=1.5, step=0.05, value=1.0,
+                                           marks={0: '0', 1: '1', 1.5: '1.5'},
+                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+                                html.Label("Petal stretch:", className="mt-2 small"),
+                                dcc.Slider(id='wm-stretch', min=0, max=1.5, step=0.05, value=1.0,
+                                           marks={0: '0', 1: '1', 1.5: '1.5'},
+                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+                                html.Label("Number of cuts (petals):", className="mt-2 small"),
+                                dcc.Slider(id='wm-cuts', min=0, max=8, step=1, value=4,
+                                           marks={0: '0', 2: '2', 4: '4', 6: '6', 8: '8'},
+                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+                            ], id='wholemount-advanced', style={'display': 'none'},
+                               className="mb-2"),
+
                             html.Label("Enable Binning:", className="mt-2"),
                             dcc.Checklist(
                                 id='enable-binning',

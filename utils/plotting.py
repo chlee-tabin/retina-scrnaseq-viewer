@@ -4,6 +4,15 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import plotly.colors as pcolors
+from utils import wholemount as wm
+
+
+def _is_wholemount(embedding):
+    """The whole-mount ("flower") reprojection styling token: an abstract petal layout
+    whose Cartesian axes carry no meaning, so it is drawn tick-less with equal aspect
+    (like a UMAP) and without axis titles."""
+    return isinstance(embedding, str) and embedding.startswith('wholemount')
 
 
 def _message_figure(text):
@@ -134,13 +143,16 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
     selection_data : dict
         Dictionary containing selection indices
     """
-    # For custom embedding, use the actual column names
-    if ' vs ' in embedding:
+    # For custom embedding, use the actual column names; the whole-mount projection has
+    # no meaningful Cartesian axes, so it carries no axis titles.
+    if _is_wholemount(embedding):
+        x_label = y_label = ''
+    elif ' vs ' in embedding:
         x_label, y_label = embedding.split(' vs ')
     else:
         x_label = f'{embedding}_1'
         y_label = f'{embedding}_2'
-    
+
     # Plot Order: a row permutation drawn on top last (computed on the ORIGINAL colour
     # values, before any categorical string-cast below).
     perm = _plot_order_perm(df['color'].to_numpy(), plot_order, treat_as_categorical)
@@ -164,8 +176,9 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
 
     fig = px.scatter(df, x='x', y='y', color='color', **px_kwargs)
     
-    # Apply different styling based on embedding type
-    if 'umap' in embedding.lower():
+    # Apply different styling based on embedding type. UMAP and the whole-mount petal
+    # layout are both abstract: hide ticks and lock equal aspect.
+    if _is_wholemount(embedding) or 'umap' in embedding.lower():
         fig.update_layout(
             plot_bgcolor='white',
             xaxis=dict(
@@ -258,7 +271,9 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
     treat_as_categorical : bool
         Whether to treat the color column as categorical
     """
-    if ' vs ' in embedding:
+    if _is_wholemount(embedding):
+        x_label = y_label = ''
+    elif ' vs ' in embedding:
         x_label, y_label = embedding.split(' vs ')
     else:
         x_label = f'{embedding}_1'
@@ -444,6 +459,11 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             margin=dict(t=60, l=60, r=20, b=20)
         )
 
+        # The whole-mount petal layout has no meaningful Cartesian axes: hide ticks.
+        if _is_wholemount(embedding):
+            fig.update_xaxes(showticklabels=False, showgrid=False, zeroline=False, title_text='')
+            fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, title_text='')
+
     return fig
 
 
@@ -527,6 +547,112 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
     H_mean = np.where(H_mean > vmax, vmax, H_mean)
 
     return H_mean, H_counts, xedges, yedges, vmax
+
+
+def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
+                                    smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                    bin_stat='mean', color_label='expression',
+                                    params=None, n_color_bins=24):
+    """Whole-mount ("flower") binned map, faithful to the reviewer figure.
+
+    Unlike a histogram of the warped per-cell coordinates (which scatters isolated
+    "strayed" bins into the gore gaps and sparse periphery), this bins on the regular
+    (NT, DV) SCORE grid, warps the grid VERTICES to flower space, and draws each
+    surviving bin as a filled quad -- dropping bins below the cell floor and quads that
+    cross a relief rip. Because the binning happens in score space (where the cells
+    actually live) and warping only repositions a contiguous grid, no stray tiles appear.
+
+    Mirrors flower_reproject.render_binned: bin -> mask (min_cells) -> warp vertices ->
+    drop rip-crossing quads. Filled quads are bucketed by colour into a few traces (so
+    the whole map is cheap), with an invisible colorbar carrier and bin-centre hover
+    markers for read-out.
+    """
+    P = dict(wm.LOCKED_PARAMS if params is None else params)
+    dv = np.asarray(dv, dtype=float)
+    nt = np.asarray(nt, dtype=float)
+    v = np.asarray(vals, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt) & np.isfinite(v)
+    dv, nt, v = dv[finite], nt[finite], v[finite]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+
+    is_pct = (bin_stat == 'frac_pos')
+
+    # Per-bin statistic on the SCORE grid (x = NT, y = DV), via the shared binning math.
+    # H is indexed [nt_bin, dv_bin]; NaN where the bin is below the cell floor.
+    H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
+        nt, dv, v, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
+    vmax = max(float(vmax), 1e-9)
+    nb = int(bin_size)
+
+    # Warp the grid VERTICES ((nb+1) x (nb+1)); keep gore + rho for rip detection.
+    NTv, DVv = np.meshgrid(nt_edges, dv_edges, indexing='ij')   # [nt, dv]
+    Xv, Yv, diag = wm.flower_transform(DVv.ravel(), NTv.ravel(), **P)
+    Xv = Xv.reshape(NTv.shape); Yv = Yv.reshape(NTv.shape)
+    gore_v = np.asarray(diag['gore']).reshape(NTv.shape)
+    rho_v = np.asarray(diag['rho']).reshape(NTv.shape)
+    rho_join = np.deg2rad({**wm.DEFAULT_PARAMS, **P}['rho_join_deg'])
+
+    # Bucket filled quads by colour level -> a handful of traces instead of thousands.
+    buckets = {}
+    hx, hy, htext = [], [], []
+    # Bin-centre coordinates (for hover), warped with the same transform.
+    nt_c = (nt_edges[:-1] + nt_edges[1:]) / 2
+    dv_c = (dv_edges[:-1] + dv_edges[1:]) / 2
+    NTc, DVc = np.meshgrid(nt_c, dv_c, indexing='ij')
+    Xc, Yc, _ = wm.flower_transform(DVc.ravel(), NTc.ravel(), **P)
+    Xc = Xc.reshape(H.shape); Yc = Yc.reshape(H.shape)
+
+    for i in range(nb):
+        for j in range(nb):
+            z = H[i, j]
+            if not np.isfinite(z):
+                continue
+            gs = gore_v[i:i + 2, j:j + 2]
+            if gs.min() != gs.max() and rho_v[i:i + 2, j:j + 2].min() > rho_join:
+                continue   # quad straddles a rip beyond the joined centre -> real slit
+            b = int(min(n_color_bins - 1, max(0, np.floor(z / vmax * n_color_bins))))
+            xs = [Xv[i, j], Xv[i, j + 1], Xv[i + 1, j + 1], Xv[i + 1, j], Xv[i, j], None]
+            ys = [Yv[i, j], Yv[i, j + 1], Yv[i + 1, j + 1], Yv[i + 1, j], Yv[i, j], None]
+            buckets.setdefault(b, ([], []))
+            buckets[b][0].extend(xs); buckets[b][1].extend(ys)
+            hx.append(float(Xc[i, j])); hy.append(float(Yc[i, j]))
+            htext.append((f"{z * 100:.1f}% detected" if is_pct else f"{z:.2f}")
+                         + f"<br>{int(H_counts[i, j])} cells")
+
+    fig = go.Figure()
+    if not buckets:
+        return _message_figure("No populated bins to project at this resolution.")
+    levels = pcolors.sample_colorscale(
+        'viridis', [(b + 0.5) / n_color_bins for b in range(n_color_bins)])
+    for b, (xs, ys) in sorted(buckets.items()):
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode='lines', fill='toself', fillcolor=levels[b],
+            line=dict(width=0), hoverinfo='skip', showlegend=False))
+
+    # Invisible carrier trace for the continuous colorbar.
+    fig.add_trace(go.Scatter(
+        x=[float(np.nanmean(Xc))], y=[float(np.nanmean(Yc))], mode='markers',
+        marker=dict(colorscale='viridis', cmin=0, cmax=vmax, color=[0], size=0.1,
+                    opacity=0, showscale=True,
+                    colorbar=dict(title=color_label,
+                                  tickformat='.0%' if is_pct else None)),
+        hoverinfo='skip', showlegend=False))
+    # Invisible bin-centre markers carrying the hover read-out.
+    fig.add_trace(go.Scatter(
+        x=hx, y=hy, mode='markers', marker=dict(size=8, opacity=0),
+        text=htext, hovertemplate='%{text}<extra></extra>', showlegend=False))
+
+    fig.update_layout(
+        title='Whole-mount projection (score-space binned)',
+        plot_bgcolor='white', height=800, showlegend=False,
+        margin=dict(t=60, l=20, r=20, b=20),
+        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False,
+                   scaleanchor='y', scaleratio=1),
+        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+    )
+    return fig
 
 
 def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin',
@@ -711,7 +837,9 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
     binned : bool
         Heatmap (True) vs per-cell scatter (False).
     """
-    if ' vs ' in embedding:
+    if _is_wholemount(embedding):
+        x_label = y_label = ''
+    elif ' vs ' in embedding:
         x_label, y_label = embedding.split(' vs ')
     else:
         x_label = f'{embedding}_1'
@@ -799,18 +927,18 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
                 row=1, col=idx + 1,
             )
 
-    is_umap = 'umap' in embedding.lower()
+    hide_axes = _is_wholemount(embedding) or 'umap' in embedding.lower()
     for col in (1, 2):
         fig.update_xaxes(
             title_text=x_label,
             showgrid=False, zeroline=False,
-            showticklabels=not is_umap,
+            showticklabels=not hide_axes,
             row=1, col=col,
         )
         fig.update_yaxes(
             title_text=y_label,
             showgrid=False, zeroline=False,
-            showticklabels=not is_umap,
+            showticklabels=not hide_axes,
             scaleanchor=('x' if col == 1 else 'x2'),
             scaleratio=1,
             row=1, col=col,
