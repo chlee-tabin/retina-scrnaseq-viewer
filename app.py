@@ -21,6 +21,7 @@ from callbacks.selection_callbacks import *
 from callbacks.url_callbacks import *
 from callbacks.main_callbacks import *
 from callbacks.status_callbacks import *
+from callbacks.deg_callbacks import *
 
 # Import utilities
 from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding

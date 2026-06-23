@@ -1,4 +1,4 @@
-from dash import Input, Output, State, callback
+from dash import Input, Output, State, callback, no_update
 from utils.data_loading import load_adata, load_dataset_config, gene_search_options
 from utils.plotting import (
     create_scatter_plot,
@@ -221,6 +221,11 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
 
     if not data_store:
         return {}
+
+    # The ROI-DEG view owns its own figures (callbacks/deg_callbacks); the main-plot is
+    # hidden then, so skip its (expensive) render entirely.
+    if plot_type == 'deg':
+        return no_update
 
     try:
         config = load_dataset_config()
@@ -584,16 +589,20 @@ def toggle_wholemount_advanced(custom_projection):
     return {'display': 'none'}
 
 
-# ---- F2: toggle map vs. expression-by-group control panels ----
+# ---- F2: toggle map / expression-by-group / ROI-DEG control panels ----
 @callback(
     [Output('map-controls', 'style'),
-     Output('group-controls', 'style')],
+     Output('group-controls', 'style'),
+     Output('deg-controls', 'style')],
     Input('plot-type', 'value')
 )
 def toggle_plot_type(plot_type):
+    hide, show = {'display': 'none'}, {'display': 'block'}
     if plot_type == 'group':
-        return {'display': 'none'}, {'display': 'block'}
-    return {'display': 'block'}, {'display': 'none'}
+        return hide, show, hide
+    if plot_type == 'deg':
+        return hide, hide, show
+    return show, hide, hide
 
 
 # ---- Within the group view, reveal only the controls the chosen style uses ----
