@@ -658,6 +658,35 @@ def _sphere_layout(title):
                    camera=_SPHERE_CAMERA))
 
 
+def _orientation_labels(sx, sy, sz):
+    """Cardinal anatomical-direction labels so the 3D view is readable (the axes are hidden):
+    nasal +x, dorsal +y, temporal -x, ventral -y, HAA at the pole. Each label floats just
+    beyond the data's rim in its direction (95th-pct colatitude there) and is lifted off the
+    unit sphere so the coloured cap doesn't occlude it. Text labels billboard to the camera,
+    so they stay legible as the user rotates."""
+    sx = np.asarray(sx, dtype=float); sy = np.asarray(sy, dtype=float); sz = np.asarray(sz, dtype=float)
+    m = np.isfinite(sx) & np.isfinite(sy) & np.isfinite(sz)
+    sx, sy, sz = sx[m], sy[m], sz[m]
+    R = 1.08  # lift labels just off the surface
+    lx, ly, lz, lt = [], [], [], []
+    if sx.size:
+        az = np.degrees(np.arctan2(sy, sx)) % 360.0
+        rho = np.arccos(np.clip(sz, -1.0, 1.0))   # colatitude
+        for ang, name in [(0, 'Nasal'), (90, 'Dorsal'), (180, 'Temporal'), (270, 'Ventral')]:
+            near = np.abs(((az - ang + 180) % 360) - 180) <= 30
+            rr = np.percentile(rho[near], 95) if near.sum() > 20 else np.nanpercentile(rho, 95)
+            rr = min(rr + np.radians(8), np.radians(105))   # just beyond the rim
+            t = np.radians(ang)
+            lx.append(R * np.sin(rr) * np.cos(t))
+            ly.append(R * np.sin(rr) * np.sin(t))
+            lz.append(R * np.cos(rr))
+            lt.append(name)
+    lx.append(0.0); ly.append(0.0); lz.append(R); lt.append('HAA')   # pole / cap centre
+    return go.Scatter3d(
+        x=lx, y=ly, z=lz, mode='text', text=lt,
+        textfont=dict(size=13, color='#222'), hoverinfo='skip', showlegend=False)
+
+
 def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
                          treat_as_categorical=False, color_map=None, category_order=None):
     """3D spherical view of the whole-mount map: each cell a point on the unit sphere
@@ -695,6 +724,7 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
     fig = px.scatter_3d(df, x='x', y='y', z='z', color='color', **px_kwargs)
     fig.update_traces(marker=dict(size=2.5, opacity=0.85), selector=dict(type='scatter3d'))
     fig.add_trace(_reference_globe())
+    fig.add_trace(_orientation_labels(x, y, z))
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D)'))
     return fig
 
@@ -761,6 +791,8 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
 
     fig = go.Figure()
     fig.add_trace(_reference_globe())
+    csx, csy, csz = wm.sphere_coords(dv, nt, params=P)   # cell coords -> direction labels
+    fig.add_trace(_orientation_labels(csx, csy, csz))
     # flatshading + ambient-only lighting so the colour IS the statistic (no 3D shading tint).
     fig.add_trace(go.Mesh3d(
         x=Xv, y=Yv, z=Zv, i=ti, j=tj, k=tk,
