@@ -221,37 +221,6 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
 
     return fig
 
-def create_metacell_plot(H, xedges, yedges, embedding):
-    """
-    Create a density-based visualization of cells
-    """
-    x_centers = (xedges[:-1] + xedges[1:]) / 2
-    y_centers = (yedges[:-1] + yedges[1:]) / 2
-    
-    if ' vs ' in embedding:
-        x_label, y_label = embedding.split(' vs ')
-    else:
-        x_label = f'{embedding}_1'
-        y_label = f'{embedding}_2'
-    
-    fig = px.imshow(
-        H.T,
-        x=x_centers,
-        y=y_centers,
-        labels={'x': x_label, 'y': y_label},
-        title=f'Density visualization - {embedding}',
-        aspect='equal'
-    )
-    
-    # Apply UMAP-specific styling
-    if 'umap' in embedding.lower():
-        fig.update_layout(
-            xaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
-            yaxis=dict(showgrid=False, showticklabels=False, zeroline=False)
-        )
-    
-    return fig
-
 def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=1, color_floor=0.05, bin_stat='mean'):
     """
     Create a binned visualization of cells

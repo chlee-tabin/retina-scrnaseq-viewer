@@ -1,5 +1,5 @@
 import os
-import scanpy as sc
+import anndata as ad
 import logging
 import yaml
 from pathlib import Path
@@ -40,7 +40,7 @@ def load_adata(filename):
         logger.error(f"On-demand provisioning failed for {filename}: {e}")
     resolved = resolve_data_path(filename)
     logger.info(f"Starting to load {resolved}")
-    adata = sc.read_h5ad(resolved)
+    adata = ad.read_h5ad(resolved)
     logger.info(f"Successfully loaded {resolved} with {adata.n_obs} cells")
     return adata
 

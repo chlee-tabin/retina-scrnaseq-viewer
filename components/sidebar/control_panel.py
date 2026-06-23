@@ -1,10 +1,7 @@
 from dash import html, dcc
 import dash_bootstrap_components as dbc
-from utils.config import load_config
 
 def create_control_panel():
-    config = load_config()
-
     return html.Div([
         dbc.Card([
             dbc.CardBody([
@@ -94,6 +91,61 @@ def create_control_panel():
                                 html.Label("Number of cuts (petals):", className="mt-2 small"),
                                 dcc.Slider(id='wm-cuts', min=0, max=8, step=1, value=4,
                                            marks={0: '0', 2: '2', 4: '4', 6: '6', 8: '8'},
+                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+
+                                # Scaling / geometry knobs (inherit DEFAULT_PARAMS; every
+                                # default below reproduces Fig R2.5). Each is always shown so
+                                # the layout effect is explorable; labels note when one only
+                                # applies in a particular mode.
+                                html.Hr(className="my-2"),
+                                dcc.Checklist(
+                                    id='wm-symmetric',
+                                    options=[{'label': ' Symmetric per-side scaling (equalize opposing petals)',
+                                              'value': 'enabled'}],
+                                    value=['enabled'],   # R2.5; untick -> p99 keeps true NT/DV asymmetry
+                                    className="small mb-1",
+                                ),
+                                html.Label("Pole (score origin):", className="mt-1 small"),
+                                dcc.RadioItems(
+                                    id='wm-pole',
+                                    options=[
+                                        {'label': 'Origin (0,0) — HAA pole', 'value': 'origin'},
+                                        {'label': 'Median of cells', 'value': 'median'},
+                                    ],
+                                    value='origin',
+                                    className="small mb-1",
+                                    labelStyle={'display': 'block'},
+                                ),
+                                html.Label("Radial de-warp:", className="mt-1 small"),
+                                dcc.RadioItems(
+                                    id='wm-dewarp',
+                                    options=[
+                                        {'label': 'arcsin (spherical-cap)', 'value': 'arcsin'},
+                                        {'label': 'power', 'value': 'pow'},
+                                        {'label': 'none (linear)', 'value': 'none'},
+                                    ],
+                                    value='arcsin',
+                                    className="small mb-1",
+                                    labelStyle={'display': 'block'},
+                                ),
+                                html.Label("Power exponent (de-warp = power):", className="mt-1 small"),
+                                dcc.Slider(id='wm-pow', min=1.0, max=3.0, step=0.1, value=1.6,
+                                           marks={1: '1', 1.6: '1.6', 2: '2', 3: '3'},
+                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+                                html.Label("Relief mode:", className="mt-2 small"),
+                                dcc.RadioItems(
+                                    id='wm-gap-mode',
+                                    options=[
+                                        {'label': 'deficit (curvature-true rifts)', 'value': 'deficit'},
+                                        {'label': 'linear (V-notch)', 'value': 'linear'},
+                                    ],
+                                    value='deficit',
+                                    className="small mb-1",
+                                    labelStyle={'display': 'block'},
+                                ),
+                                html.Label("Linear rip width (relief = linear):", className="mt-1 small"),
+                                dcc.Slider(id='wm-gap-frac', min=0.0, max=1.0, step=0.05, value=0.5,
+                                           marks={0: '0', 0.5: '0.5', 1: '1'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),
                             ], id='wholemount-advanced', style={'display': 'none'},
                                className="mb-2"),
