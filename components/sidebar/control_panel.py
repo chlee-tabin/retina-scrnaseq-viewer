@@ -1,6 +1,14 @@
 from dash import html, dcc
 import dash_bootstrap_components as dbc
 
+
+def _help(text):
+    """A small ⓘ info icon carrying a native hover tooltip (the `title` attribute), so a
+    label can offer a longer explanation on hover without any extra Dash component."""
+    return html.Span(" ⓘ", title=text,
+                     style={'cursor': 'help', 'color': '#0d6efd', 'fontSize': '12px'})
+
+
 def create_control_panel():
     return html.Div([
         dbc.Card([
@@ -80,11 +88,25 @@ def create_control_panel():
                                 # flower-only and is hidden under the sphere projection.
                                 html.Div("Cap extent, pole & scaling — affect flower and sphere.",
                                          className="text-muted fst-italic", style={'fontSize': '11px'}),
-                                html.Label("Nasotemporal extent (deg):", className="mt-1 small"),
+                                html.Label([
+                                    "Nasotemporal extent (deg):",
+                                    _help("Max colatitude (angle from the HAA pole) the most "
+                                          "extreme nasal/temporal cells reach on the cap. "
+                                          "Default 82° reproduces Fig R2.5. NOTE: with the arcsin "
+                                          "de-warp the effect saturates near 90° and folds past it "
+                                          "(110° gives a SMALLER cap than 90°) — to see a large "
+                                          "change, lower this value or switch de-warp to power/none."),
+                                ], className="mt-1 small"),
                                 dcc.Slider(id='wm-rho-nt', min=40, max=110, step=1, value=82,
                                            marks={40: '40', 82: '82', 110: '110'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),
-                                html.Label("Dorsoventral extent (deg):", className="mt-2 small"),
+                                html.Label([
+                                    "Dorsoventral extent (deg):",
+                                    _help("Same as nasotemporal extent but for the dorsal/ventral "
+                                          "axis. Default 64° — smaller than the 82° N-T, which is why "
+                                          "the map is elongated nasotemporally. Same arcsin "
+                                          "saturation/fold caveat near and past 90°."),
+                                ], className="mt-2 small"),
                                 dcc.Slider(id='wm-rho-dv', min=40, max=110, step=1, value=64,
                                            marks={40: '40', 64: '64', 110: '110'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),
@@ -106,7 +128,16 @@ def create_control_panel():
                                     className="small mb-1",
                                     labelStyle={'display': 'block'},
                                 ),
-                                html.Label("Radial de-warp:", className="mt-1 small"),
+                                html.Label([
+                                    "Radial de-warp:",
+                                    _help("How a cell's score-radius r (0 at the pole, 1 at the rim) "
+                                          "becomes colatitude ρ. arcsin: ρ=arcsin(r·sin(extent)) — "
+                                          "treats r as the flattened (orthographic) image of a sphere "
+                                          "and inverts it, expanding the periphery; the spherical-cap "
+                                          "model, but its response to 'extent' saturates near 90°. "
+                                          "power: ρ=extent·r^p (see Power exponent). none: ρ=extent·r "
+                                          "(linear)."),
+                                ], className="mt-1 small"),
                                 dcc.RadioItems(
                                     id='wm-dewarp',
                                     options=[
@@ -118,7 +149,14 @@ def create_control_panel():
                                     className="small mb-1",
                                     labelStyle={'display': 'block'},
                                 ),
-                                html.Label("Power exponent (de-warp = power):", className="mt-1 small"),
+                                html.Label([
+                                    "Power exponent (de-warp = power):",
+                                    _help("Only used when de-warp = power. ρ = extent · r^p. "
+                                          "p=1 is linear; p>1 pushes cells toward the pole "
+                                          "(compresses the centre, expands the rim); p<1 does the "
+                                          "opposite. Default 1.6. Unlike arcsin, here 'extent' scales "
+                                          "ρ directly, so raising it past 90° genuinely enlarges the cap."),
+                                ], className="mt-1 small"),
                                 dcc.Slider(id='wm-pow', min=1.0, max=3.0, step=0.1, value=1.6,
                                            marks={1: '1', 1.6: '1.6', 2: '2', 3: '3'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),
