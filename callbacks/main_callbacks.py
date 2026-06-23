@@ -100,6 +100,29 @@ def _replicate_series(adata, replicate_value, replicate_columns):
     return None
 
 
+def _resolve_group_field(adata, field):
+    """(display_name, per-cell string array) for a group-by / split-by selection.
+
+    A composite key built by `_replicate_key` (e.g. library x genotype) resolves to its
+    columns joined for display ('libA | donor0'), so a per-library demux donor label
+    ('genotype') is only ever grouped WITHIN its library -- never on its own, where the
+    repeated donor labels across libraries would be meaningless. A plain obs column
+    resolves to itself. Returns (field, None) when the field is missing/unresolvable.
+    """
+    if not field:
+        return field, None
+    if _REP_SEP in field:
+        cols = field.split(_REP_SEP)
+        if any(c not in adata.obs.columns for c in cols):
+            return field, None
+        disp = ' x '.join(cols)
+        ser = adata.obs[cols].astype(str).agg(' | '.join, axis=1).to_numpy()
+        return disp, ser
+    if field in adata.obs.columns:
+        return field, adata.obs[field].astype(str).to_numpy()
+    return field, None
+
+
 def _annotation_style(data_store, column):
     """(color_map, category_order) for a categorical `column`: the configured per-type
     colours + order when `column` is the dataset's annotation column, else (None,
@@ -176,7 +199,9 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts):
      Input('wm-rho-dv', 'value'),
      Input('wm-gap', 'value'),
      Input('wm-stretch', 'value'),
-     Input('wm-cuts', 'value')],
+     Input('wm-cuts', 'value'),
+     Input('group-value-source', 'value'),
+     Input('group-meta-select', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
@@ -186,7 +211,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 url_search, plot_type, group_gene, group_by, group_split, group_style,
                 gene_module, compare_genes, gene2, bin_stat,
                 group_positive_only, group_replicate, compare_shared_scale,
-                custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts):
+                custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
+                group_value_source, group_meta):
     logger.debug("update_plot called with parameters:")
 
     # Initialize treat_as_categorical as False by default
@@ -204,14 +230,24 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
             if not group_by:
                 return _message_figure("Select a categorical column to group by.")
 
-            # Consistent per-type colour + biological order, applied when grouping on
-            # the dataset's configured annotation column (else default palette/order).
+            value_is_gene = (group_value_source != 'meta')
+
+            # Resolve the grouping field. A composite (library x genotype) demux key maps
+            # to a per-cell 'libA | donor0' label, so a per-library demux donor ('genotype')
+            # is only ever grouped WITHIN its library, never on its own.
+            g_disp, g_series = _resolve_group_field(adata, group_by)
+            if g_series is None:
+                return _message_figure("The selected grouping column is not available in this dataset.")
+            # Per-type colour/order only applies to the dataset's plain annotation column.
             g_cmap, g_corder = _annotation_style(data_store, group_by)
 
-            # Dot plot of a gene set (module) x groups. A module selection is
-            # self-sufficient (no single gene required); without a module, fall
-            # back to the chosen gene as a 1-gene dot plot.
+            # Dot plot is a gene-set view; it does not apply to a continuous metadata value.
             if group_style == 'dotplot':
+                if not value_is_gene:
+                    return _message_figure(
+                        "Dot plot summarizes gene sets. Switch 'Plot value' to Gene "
+                        "expression, or choose violin / box / strip / figure."
+                    )
                 gene_modules = data_store.get('gene_modules', {}) or {}
                 module_genes = gene_modules.get(gene_module) if gene_module else None
                 if module_genes:
@@ -226,23 +262,33 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     )
                 expr_data = {g: _gene_vector(adata, g) for g in genes}
                 expr_df = pd.DataFrame(expr_data)
-                expr_df[group_by] = adata.obs[group_by].to_numpy()
-                return create_dotplot(expr_df, genes, group_by, category_order=g_corder)
+                expr_df[g_disp] = g_series
+                return create_dotplot(expr_df, genes, g_disp, category_order=g_corder)
 
-            # Gene-based styles (figure / violin / box / strip) need a single gene.
-            if not group_gene:
-                return _message_figure("Select a gene to plot expression by group.")
-            if group_gene not in adata.var_names:
-                return _message_figure(
-                    f"Gene '{group_gene}' not found in this dataset. "
-                    "Try a different gene or check the name/casing."
-                )
+            # Resolve the per-cell value: a gene's log-norm expression, or a continuous
+            # .obs variable (QC metric, DV/NT score, ...).
+            if value_is_gene:
+                if not group_gene:
+                    return _message_figure("Select a gene to plot expression by group.")
+                if group_gene not in adata.var_names:
+                    return _message_figure(
+                        f"Gene '{group_gene}' not found in this dataset. "
+                        "Try a different gene or check the name/casing."
+                    )
+                value_name = group_gene
+                value_vec = _gene_vector(adata, group_gene)
+            else:
+                if not group_meta or group_meta not in adata.obs.columns:
+                    return _message_figure("Select a continuous metadata variable to plot.")
+                value_name = group_meta
+                value_vec = pd.to_numeric(adata.obs[group_meta], errors='coerce').to_numpy()
 
-            # Polished 2-panel figure: pseudobulk per (group x replicate) + positive-
-            # cell log1p violin. Panel A reconstructs raw counts from .X + nCount_RNA.
-            if group_style == 'figure':
-                fig_df = pd.DataFrame({'expr': _gene_vector(adata, group_gene)})
-                fig_df[group_by] = adata.obs[group_by].to_numpy()
+            # Polished 2-panel figure (pseudobulk per group x replicate + positive-cell
+            # violin) is gene-specific; for a metadata value it falls through to a plain
+            # violin below (no pseudobulk reconstruction, no positive-cell gate).
+            if group_style == 'figure' and value_is_gene:
+                fig_df = pd.DataFrame({'expr': value_vec})
+                fig_df[g_disp] = g_series
                 if 'nCount_RNA' in adata.obs.columns:
                     fig_df['ncount'] = adata.obs['nCount_RNA'].to_numpy()
                 rep_series = _replicate_series(
@@ -251,21 +297,25 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     fig_df['replicate'] = rep_series
                 positive_only = _on(group_positive_only)
                 return create_group_expression_figure(
-                    fig_df, group_gene, group_by,
+                    fig_df, value_name, g_disp,
                     color_map=g_cmap, category_order=g_corder,
                     positive_only=positive_only,
                     norm_target=data_store.get('x_norm_target'),
                 )
 
-            # Simple violin / box / strip of one gene across groups.
-            df = pd.DataFrame({'expr': _gene_vector(adata, group_gene)})
-            df[group_by] = adata.obs[group_by].to_numpy()
-            split_col = group_split if (group_split and group_split in adata.obs.columns) else None
-            if split_col:
-                df[split_col] = adata.obs[split_col].to_numpy()
+            # Violin / box / strip (and the metadata 'figure' fallback).
+            style = group_style if group_style in ('violin', 'box', 'strip') else 'violin'
+            df = pd.DataFrame({'expr': value_vec})
+            df[g_disp] = g_series
+            s_disp, s_series = _resolve_group_field(adata, group_split)
+            if s_series is not None and s_disp != g_disp:
+                df[s_disp] = s_series
+                split_col = s_disp
+            else:
+                split_col = None
             return create_group_expression_plot(
-                df, group_gene, group_by, split_by=split_col, style=group_style,
-                color_map=g_cmap, category_order=g_corder,
+                df, value_name, g_disp, split_by=split_col, style=style,
+                color_map=g_cmap, category_order=g_corder, value_is_gene=value_is_gene,
             )
 
         # ---- Embedding / spatial map view ----
@@ -547,6 +597,18 @@ def toggle_group_style_controls(group_style):
     return fig_style, mod_style
 
 
+# ---- Group view: show the gene picker or the continuous-metadata picker ----
+@callback(
+    [Output('group-gene-block', 'style'),
+     Output('group-meta-block', 'style')],
+    Input('group-value-source', 'value')
+)
+def toggle_group_value_source(group_value_source):
+    if group_value_source == 'meta':
+        return {'display': 'none'}, {'display': 'block'}
+    return {'display': 'block'}, {'display': 'none'}
+
+
 # ---- F2: populate the group-by / split-by / gene-module dropdowns ----
 @callback(
     [Output('group-by-select', 'options'),
@@ -560,7 +622,9 @@ def toggle_group_style_controls(group_style):
      Output('group-gene-select', 'options', allow_duplicate=True),
      Output('group-gene-select', 'value'),
      Output('group-style', 'value', allow_duplicate=True),
-     Output('group-positive-only', 'value', allow_duplicate=True)],
+     Output('group-positive-only', 'value', allow_duplicate=True),
+     Output('group-meta-select', 'options'),
+     Output('group-meta-select', 'value')],
     Input('data-store', 'data'),
     State('url', 'search'),
     prevent_initial_call=True
@@ -570,7 +634,7 @@ def toggle_group_style_controls(group_style):
 def populate_group_controls(data_store, url_search):
     empty_split = [{'label': '(none)', 'value': ''}]
     if not data_store:
-        return [], None, empty_split, '', [], None, [], None, [], None, 'figure', ['enabled']
+        return [], None, empty_split, '', [], None, [], None, [], None, 'figure', ['enabled'], [], None
 
     # A shared URL may carry expression-by-group state; apply it only when the loaded
     # dataset matches the one in the URL, so a later manual dataset switch is not
@@ -579,25 +643,42 @@ def populate_group_controls(data_store, url_search):
 
     column_types = data_store.get('column_types', {}) or {}
     categorical_cols = [c for c, t in column_types.items() if t == 'categorical']
-    group_options = [{'label': c, 'value': c} for c in categorical_cols]
+    numeric_cols = [c for c, t in column_types.items() if t == 'numeric']
+
+    # Demultiplex composite (e.g. library x genotype): a per-library demux donor label
+    # ('genotype') is meaningless grouped on its own (donor labels repeat across
+    # libraries), so offer the (library x genotype) COMPOSITE as a group key and drop the
+    # trailing demux sub-label(s) from the standalone group/split choices. The leading
+    # column (library) stays groupable on its own.
+    replicate_columns = [c for c in (data_store.get('replicate_columns') or [])
+                         if c in categorical_cols]
+    demux_subcols = set(replicate_columns[1:]) if len(replicate_columns) >= 2 else set()
+    composite_key = _replicate_key(replicate_columns) if len(replicate_columns) >= 2 else None
+    composite_label = (' x '.join(replicate_columns) + ' (demux donor)') if composite_key else None
+    standalone_cats = [c for c in categorical_cols if c not in demux_subcols]
+
+    group_options = ([{'label': composite_label, 'value': composite_key}] if composite_key else []) \
+        + [{'label': c, 'value': c} for c in standalone_cats]
+    valid_group = ({composite_key} if composite_key else set()) | set(standalone_cats)
 
     # Default grouping: shared-URL value, else the configured annotation column, else
-    # 'annotation_refined', else the first categorical column.
+    # 'annotation_refined', else the first standalone categorical column (NOT the demux
+    # composite -- cell type is the natural default).
     ann_col = data_store.get('annotation_column')
-    if state.get('group_by') in categorical_cols:
+    if state.get('group_by') in valid_group:
         group_value = state['group_by']
-    elif ann_col in categorical_cols:
+    elif ann_col in standalone_cats:
         group_value = ann_col
-    elif 'annotation_refined' in categorical_cols:
+    elif 'annotation_refined' in standalone_cats:
         group_value = 'annotation_refined'
-    elif categorical_cols:
-        group_value = categorical_cols[0]
+    elif standalone_cats:
+        group_value = standalone_cats[0]
     else:
-        group_value = None
+        group_value = composite_key
 
     # Split-by includes a "(none)" option (value '') so a second grouping is optional.
     split_options = empty_split + group_options
-    valid_split = {''} | set(categorical_cols)
+    valid_split = {''} | valid_group
     split_value = state['group_split'] if state.get('group_split') in valid_split else ''
 
     gene_modules = data_store.get('gene_modules', {}) or {}
@@ -612,18 +693,17 @@ def populate_group_controls(data_store, url_search):
     else:
         module_value = next(iter(gene_modules), None)
 
-    # Pseudobulk replicate options: the configured composite (e.g. library x
-    # genotype) first, then each categorical column on its own.
-    replicate_columns = [c for c in (data_store.get('replicate_columns') or [])
-                         if c in categorical_cols]
+    # Pseudobulk replicate options: the configured composite (e.g. library x genotype)
+    # first, then each standalone categorical column -- excluding the demux sub-label
+    # ('genotype'), which on its own pools cells across libraries (the same mistake the
+    # group-by guard prevents).
     replicate_options = []
     default_replicate = None
-    if len(replicate_columns) >= 2:
-        composite = _replicate_key(replicate_columns)
+    if composite_key:
         replicate_options.append(
-            {'label': ' × '.join(replicate_columns) + ' (demux replicate)', 'value': composite})
-        default_replicate = composite
-    replicate_options += [{'label': c, 'value': c} for c in categorical_cols]
+            {'label': ' x '.join(replicate_columns) + ' (demux replicate)', 'value': composite_key})
+        default_replicate = composite_key
+    replicate_options += [{'label': c, 'value': c} for c in standalone_cats]
     valid_replicate = {opt['value'] for opt in replicate_options}
     # Default replicate: shared-URL value, then the configured composite, then a known
     # sample/batch column, else None (Panel A omitted) rather than an arbitrary first
@@ -653,9 +733,20 @@ def populate_group_controls(data_store, url_search):
     if not isinstance(positive_only, list):
         positive_only = ['enabled']
 
+    # Continuous-metadata options for the "Metadata" value source: every numeric .obs
+    # column. Default to a familiar QC / topographic metric when one is present.
+    meta_options = [{'label': c, 'value': c} for c in numeric_cols]
+    META_HINTS = ('nCount_RNA', 'nFeature_RNA', 'DV.Score', 'NT.Score')
+    if state.get('group_meta') in numeric_cols:
+        meta_value = state['group_meta']
+    else:
+        meta_value = next((c for c in META_HINTS if c in numeric_cols),
+                          numeric_cols[0] if numeric_cols else None)
+
     return (group_options, group_value, split_options, split_value,
             module_options, module_value, replicate_options, replicate_value,
-            gene_options, gene_value, group_style, positive_only)
+            gene_options, gene_value, group_style, positive_only,
+            meta_options, meta_value)
 
 
 # ---- F2: searchable gene dropdown for the group view (mirrors gene-select) ----

@@ -656,22 +656,26 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
 
 
 def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin',
-                                 color_map=None, category_order=None):
-    """Expression of one gene across the categories of a .obs column.
+                                 color_map=None, category_order=None, value_is_gene=True):
+    """Distribution of one value across the categories of a .obs column.
 
     Parameters
     ----------
     df : pandas.DataFrame
-        Must contain an 'expr' column (log-normalized expression), the
-        `group_by` column, and optionally the `split_by` column.
+        Must contain a 'expr' column (the per-cell value: log-normalized gene expression
+        when value_is_gene, else a continuous .obs variable), the `group_by` column, and
+        optionally the `split_by` column.
     gene : str
-        Gene name (for titles/axis labels).
+        Gene name, or the .obs variable name when value_is_gene is False (titles/axes).
     group_by : str
         Categorical column to group on (x-axis).
     split_by : str or None
         Optional second categorical column used for color/legend grouping.
     style : {'violin', 'box', 'strip'}
         Plot style. (The 'dotplot' style is handled by create_dotplot.)
+    value_is_gene : bool
+        True for a (zero-inflated, log-normalized) gene; False for a continuous metadata
+        variable. Controls the box-plot's detected-cell handling and the axis labels.
     """
     if df is None or len(df) == 0 or group_by not in df.columns:
         return _message_figure("No data to plot for this selection.")
@@ -702,24 +706,31 @@ def create_group_expression_plot(df, gene, group_by, split_by=None, style='violi
         color_arg = group_by
         color_kwargs = _categorical_px_kwargs(group_by, color_map=color_map, order=order)
 
+    # Gene expression is log-normalized; a continuous metadata variable keeps its own scale.
+    value_title = f"{gene} expression by {group_by}" if value_is_gene else f"{gene} by {group_by}"
+    value_axis = f"{gene} (log-normalized)" if value_is_gene else str(gene)
     common = dict(
         x=group_by,
         y='expr',
         color=color_arg,
-        title=f"{gene} expression by {group_by}",
-        labels={'expr': f"{gene} (log-normalized)", group_by: group_by},
+        title=value_title,
+        labels={'expr': value_axis, group_by: group_by},
         **color_kwargs,
     )
 
+    box_note = None
     if style == 'box':
-        # On ALL cells a zero-inflated gene's box collapses to a flat line at 0
-        # (median = Q1 = Q3 = 0): only the whisker "range" shows, no IQR box. Box the
-        # DETECTED cells (expr > 0) so the quartile box is meaningful; the title flags it.
-        box_df = plot_df[plot_df['expr'] > 0]
-        if len(box_df) == 0:
-            return _message_figure(f"No {gene}-positive cells to box-plot for this selection.")
-        box_common = {**common, 'title': f"{gene} expression by {group_by} (detected cells, expr > 0)"}
-        fig = px.box(box_df, points=False, **box_common)
+        if value_is_gene:
+            # On ALL cells a zero-inflated gene's box collapses to a flat line at 0
+            # (median = Q1 = Q3 = 0): only the whisker "range" shows, no IQR box. Box the
+            # DETECTED cells (expr > 0) so the quartile box is meaningful, and say so.
+            box_df = plot_df[plot_df['expr'] > 0]
+            if len(box_df) == 0:
+                return _message_figure(f"No {gene}-positive cells to box-plot for this selection.")
+            box_note = "Box summarizes detected cells only (expr > 0)"
+        else:
+            box_df = plot_df   # a continuous metadata variable is not zero-inflated
+        fig = px.box(box_df, points=False, **common)
     elif style == 'strip':
         fig = px.strip(plot_df, **common)
     else:  # 'violin' (default)
@@ -728,9 +739,13 @@ def create_group_expression_plot(df, gene, group_by, split_by=None, style='violi
     fig.update_layout(
         plot_bgcolor='white',
         height=600,
-        margin=dict(t=60, l=60, r=20, b=120),
+        margin=dict(t=72, l=60, r=20, b=120),
         xaxis=dict(tickangle=-40),
     )
+    # Explicit, unmissable notice that the box is on detected cells only.
+    if box_note:
+        fig.add_annotation(text=box_note, xref='paper', yref='paper', x=0.5, y=1.0,
+                           yanchor='bottom', showarrow=False, font=dict(size=11, color='#a06000'))
     return fig
 
 

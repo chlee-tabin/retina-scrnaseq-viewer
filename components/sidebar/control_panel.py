@@ -211,19 +211,45 @@ def create_control_panel():
 
                 # ---- GROUP CONTROLS (expression-by-group view) ----
                 html.Div([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H6("Gene", className="card-subtitle mb-2 text-muted"),
-                            dcc.Dropdown(
-                                id='group-gene-select',
-                                placeholder="Type gene name...",
-                                searchable=True,
-                                optionHeight=35,
-                                persistence=False,
-                                clearable=True,
-                            ),
-                        ])
-                    ], className="mt-1", style={'backgroundColor': '#f8f9fa'}),
+                    # Plot value: a gene's expression, or any continuous .obs variable
+                    # (QC metric, DV/NT score, ...).
+                    html.Label("Plot value:"),
+                    dcc.RadioItems(
+                        id='group-value-source',
+                        options=[
+                            {'label': 'Gene expression', 'value': 'gene'},
+                            {'label': 'Metadata (continuous)', 'value': 'meta'},
+                        ],
+                        value='gene',
+                        className="mb-2",
+                        labelStyle={'display': 'block'},
+                    ),
+
+                    # Gene picker (shown for the 'gene' value source).
+                    html.Div([
+                        dbc.Card([
+                            dbc.CardBody([
+                                html.H6("Gene", className="card-subtitle mb-2 text-muted"),
+                                dcc.Dropdown(
+                                    id='group-gene-select',
+                                    placeholder="Type gene name...",
+                                    searchable=True,
+                                    optionHeight=35,
+                                    persistence=False,
+                                    clearable=True,
+                                ),
+                            ])
+                        ], className="mt-1", style={'backgroundColor': '#f8f9fa'}),
+                    ], id='group-gene-block'),
+
+                    # Continuous-metadata picker (shown for the 'meta' value source).
+                    html.Div([
+                        html.Label("Metadata variable (continuous):", className="mt-1"),
+                        dcc.Dropdown(
+                            id='group-meta-select',
+                            placeholder="Select a continuous .obs variable",
+                        ),
+                    ], id='group-meta-block', style={'display': 'none'}),
 
                     html.Label("Group by (categorical):", className="mt-3"),
                     dcc.Dropdown(
