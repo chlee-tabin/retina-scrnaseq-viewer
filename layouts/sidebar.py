@@ -3,20 +3,23 @@ import dash_bootstrap_components as dbc
 from components.sidebar.dataset_info import create_dataset_info
 from components.sidebar.control_panel import create_control_panel
 
-# Permanent link to the manuscript preprint, shown at the top of the sidebar.
+# Viewer version (bump on each released change) + manuscript preprint link, shown at
+# the top of the sidebar.
+VIEWER_VERSION = "0.2"
 PREPRINT_URL = "https://www.biorxiv.org/content/10.64898/2026.01.04.697548v1"
 
 def create_sidebar():
     return html.Div([
-        # Permanent header: link to the manuscript preprint (bioRxiv).
-        html.Div(
+        # Permanent header: viewer name + version, with a link to the manuscript preprint.
+        html.Div([
+            html.Div(f"Retinal scRNA-seq topographic viewer v{VIEWER_VERSION}",
+                     className="fw-semibold"),
             html.A(
                 "📄 Manuscript preprint (bioRxiv)",
                 href=PREPRINT_URL, target="_blank", rel="noopener noreferrer",
-                className="fw-semibold",
+                className="small",
             ),
-            className="mb-2",
-        ),
+        ], className="mb-2"),
         # Share View button always visible at top
         dbc.Button("Share View", id="share-button", color="primary", className="mb-3"),
         dbc.Input(id="share-url", type="text", style={'display': 'none'}, className="mt-2"),
