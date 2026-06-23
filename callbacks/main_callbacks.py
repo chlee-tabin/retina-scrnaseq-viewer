@@ -9,6 +9,7 @@ from utils.plotting import (
     create_dual_gene_figure,
     create_wholemount_binned_figure,
     create_sphere_figure,
+    create_sphere_binned_figure,
     _message_figure,
 )
 import pandas as pd
@@ -448,8 +449,22 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
 
         # ---- 3D spherical whole-mount: the topographic map on its native geometry ----
         # Renders a complete 3D figure (bypasses the 2D binning/scatter dispatch below).
-        # Colour resolution above is shared; categorical annotation keeps its configured map.
+        # Binned (continuous) -> a Mesh3d surface painted from the score-space binned map,
+        # mirroring the flower's binned dispatch; otherwise per-cell points. Colour resolution
+        # above is shared; categorical annotation keeps its configured map.
         if sphere_xyz is not None:
+            if binning_on and not treat_as_categorical and color_series is not None:
+                smooth_on = _on(enable_smoothing)
+                smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+                base = gene if color_by == 'gene_expression' else str(color_by)
+                cl = f"{base} (% detected)" if bin_stat == 'frac_pos' else base
+                return create_sphere_binned_figure(
+                    dv_cells, nt_cells, np.asarray(color_series, dtype=float),
+                    bin_size=bin_number, percentile=percentile, smooth_sigma=smooth_sigma,
+                    min_cells=data_store.get('min_cells_per_bin', 1),
+                    color_floor=data_store.get('color_floor', 0.05),
+                    bin_stat=(bin_stat or 'mean'), color_label=cl, params=proj_params,
+                )
             s_cmap, s_corder = _annotation_style(data_store, color_by)
             return create_sphere_figure(
                 sphere_xyz[0], sphere_xyz[1], sphere_xyz[2],
@@ -600,12 +615,26 @@ def toggle_raw_axes(custom_projection):
     Input('custom-projection', 'value')
 )
 def toggle_wholemount_advanced(custom_projection):
-    # The Advanced-projection controls apply to both whole-mount views. On the sphere the
-    # extent / de-warp / pole / symmetric knobs reshape the cap; the relief gap / cuts /
-    # stretch are flat-layout-only and have no effect there (the sphere has no rips).
+    # The Advanced-projection panel applies to both whole-mount views. On the sphere the
+    # extent / de-warp / pole / symmetric knobs reshape the cap; the relief sub-group is
+    # hidden separately (toggle_wholemount_relief) since it is flat-layout-only.
     if custom_projection in ('flower', 'sphere'):
         return {'display': 'block'}
     return {'display': 'none'}
+
+
+@callback(
+    Output('wholemount-relief-controls', 'style'),
+    Input('custom-projection', 'value')
+)
+def toggle_wholemount_relief(custom_projection):
+    # The flat-layout relief (cuts / wedge gap / relief mode / rip width / petal stretch)
+    # only shapes the 2D flower -- it relieves the curvature deficit when flattening. The
+    # sphere uses the un-ripped (rho, theta) directly, so these knobs do nothing there: hide
+    # the whole group under the sphere projection (it stays visible for the flower).
+    if custom_projection == 'sphere':
+        return {'display': 'none'}
+    return {'display': 'block'}
 
 
 # ---- F2: toggle map vs. expression-by-group control panels ----

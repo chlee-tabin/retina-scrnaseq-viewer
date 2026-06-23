@@ -631,6 +631,33 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     return fig
 
 
+# Shared 3D-scene styling for the two sphere views (points + binned). The camera looks
+# face-on at the polar cap with dorsal (+y) up and nasal (+x) right, matching the flower.
+_SPHERE_CAMERA = dict(eye=dict(x=0.0, y=-0.85, z=1.45), up=dict(x=0, y=1, z=0))
+
+
+def _reference_globe():
+    """Faint translucent unit sphere so the coloured cap reads as a curved surface."""
+    u = np.linspace(0, 2 * np.pi, 48)
+    v = np.linspace(0, np.pi, 24)
+    return go.Surface(
+        x=np.outer(np.cos(u), np.sin(v)),
+        y=np.outer(np.sin(u), np.sin(v)),
+        z=np.outer(np.ones_like(u), np.cos(v)),
+        opacity=0.12, showscale=False, hoverinfo='skip',
+        colorscale=[[0, '#dadada'], [1, '#dadada']],
+        lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0))
+
+
+def _sphere_layout(title):
+    """Common layout for the sphere figures: white bg, hidden axes, equal aspect, face-on cam."""
+    return dict(
+        title=title, plot_bgcolor='white', height=800, margin=dict(t=60, l=0, r=0, b=0),
+        scene=dict(aspectmode='data',
+                   xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
+                   camera=_SPHERE_CAMERA))
+
+
 def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
                          treat_as_categorical=False, color_map=None, category_order=None):
     """3D spherical view of the whole-mount map: each cell a point on the unit sphere
@@ -640,7 +667,8 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
 
     Colour mirrors create_scatter_plot (categorical -> fixed map + order via the shared
     helpers; else the viridis continuous scale), so a gene / score / annotation colours
-    identically to the 2D views. Binning and lasso-selection are not (yet) wired for 3D.
+    identically to the 2D views. The binned counterpart is create_sphere_binned_figure;
+    lasso-selection is not (yet) wired for 3D.
     """
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -666,27 +694,86 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
 
     fig = px.scatter_3d(df, x='x', y='y', z='z', color='color', **px_kwargs)
     fig.update_traces(marker=dict(size=2.5, opacity=0.85), selector=dict(type='scatter3d'))
+    fig.add_trace(_reference_globe())
+    fig.update_layout(**_sphere_layout('Whole-mount sphere (3D)'))
+    return fig
 
-    # Faint reference globe so the colored cap reads as a curved surface (no shading/colorbar).
-    u = np.linspace(0, 2 * np.pi, 48)
-    v = np.linspace(0, np.pi, 24)
-    sx = np.outer(np.cos(u), np.sin(v))
-    sy = np.outer(np.sin(u), np.sin(v))
-    sz = np.outer(np.ones_like(u), np.cos(v))
-    fig.add_trace(go.Surface(
-        x=sx, y=sy, z=sz, opacity=0.12, showscale=False, hoverinfo='skip',
-        colorscale=[[0, '#dadada'], [1, '#dadada']],
+
+def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
+                                smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                bin_stat='mean', color_label='expression', params=None):
+    """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
+
+    Identical score-grid binning to create_wholemount_binned_figure (bin in (NT, DV) score
+    space via _binned_mean, mask by the cell floor, share the cell-derived basis), but the
+    grid VERTICES are warped onto the sphere (wm.sphere_coords) and each populated bin is
+    drawn as two Mesh3d triangles coloured by its statistic. A sphere has no curvature
+    deficit, so -- unlike the flat flower -- there are no relief rips to drop; only
+    below-floor bins are omitted, leaving the faint reference globe showing through.
+    """
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    dv = np.asarray(dv, dtype=float)
+    nt = np.asarray(nt, dtype=float)
+    v = np.asarray(vals, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt) & np.isfinite(v)
+    dv, nt, v = dv[finite], nt[finite], v[finite]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+    # Derive the pole + per-axis scale from THESE cells if no fit was injected (standalone).
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
+
+    is_pct = (bin_stat == 'frac_pos')
+    # Per-bin statistic on the SCORE grid (x = NT, y = DV); H is [nt_bin, dv_bin], NaN below floor.
+    H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
+        nt, dv, v, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
+    vmax = max(float(vmax), 1e-9)
+    nb = int(bin_size)
+
+    # Warp the (nb+1)x(nb+1) grid vertices onto the sphere; flat index = i*(nb+1) + j.
+    NTv, DVv = np.meshgrid(nt_edges, dv_edges, indexing='ij')   # [nt, dv]
+    Xv, Yv, Zv = wm.sphere_coords(DVv.ravel(), NTv.ravel(), params=P)
+    # Bin centres (for hover), warped with the same transform.
+    nt_c = (nt_edges[:-1] + nt_edges[1:]) / 2
+    dv_c = (dv_edges[:-1] + dv_edges[1:]) / 2
+    NTc, DVc = np.meshgrid(nt_c, dv_c, indexing='ij')
+    Xc, Yc, Zc = (a.reshape(H.shape) for a in wm.sphere_coords(DVc.ravel(), NTc.ravel(), params=P))
+
+    # Two triangles per populated bin; per-face intensity = the bin statistic (crisp bins).
+    ti, tj, tk, face_val = [], [], [], []
+    hx, hy, hz, htext = [], [], [], []
+    for i in range(nb):
+        for j in range(nb):
+            z = H[i, j]
+            if not np.isfinite(z):
+                continue
+            a = i * (nb + 1) + j; b = (i + 1) * (nb + 1) + j
+            c = (i + 1) * (nb + 1) + (j + 1); d = i * (nb + 1) + (j + 1)
+            ti += [a, a]; tj += [b, c]; tk += [c, d]   # quad (a,b,c,d) -> tris (a,b,c)+(a,c,d)
+            face_val += [z, z]
+            hx.append(float(Xc[i, j])); hy.append(float(Yc[i, j])); hz.append(float(Zc[i, j]))
+            htext.append((f"{z * 100:.1f}% detected" if is_pct else f"{z:.2f}")
+                         + f"<br>{int(H_counts[i, j])} cells")
+
+    if not ti:
+        return _message_figure("No populated bins to project at this resolution.")
+
+    fig = go.Figure()
+    fig.add_trace(_reference_globe())
+    # flatshading + ambient-only lighting so the colour IS the statistic (no 3D shading tint).
+    fig.add_trace(go.Mesh3d(
+        x=Xv, y=Yv, z=Zv, i=ti, j=tj, k=tk,
+        intensity=face_val, intensitymode='cell',
+        colorscale='viridis', cmin=0.0, cmax=vmax,
+        colorbar=dict(title=color_label, tickformat='.0%' if is_pct else None),
+        showscale=True, flatshading=True, hoverinfo='skip',
         lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)))
-
-    fig.update_layout(
-        title='Whole-mount sphere (3D)',
-        plot_bgcolor='white', height=800, margin=dict(t=60, l=0, r=0, b=0),
-        scene=dict(
-            aspectmode='data',
-            xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
-            camera=dict(eye=dict(x=0.7, y=-1.2, z=1.0)),
-        ),
-    )
+    # Invisible bin-centre markers carrying the hover read-out.
+    fig.add_trace(go.Scatter3d(
+        x=hx, y=hy, z=hz, mode='markers', marker=dict(size=3, opacity=0),
+        text=htext, hovertemplate='%{text}<extra></extra>', showlegend=False))
+    fig.update_layout(**_sphere_layout('Whole-mount sphere (3D, score-space binned)'))
     return fig
 
 

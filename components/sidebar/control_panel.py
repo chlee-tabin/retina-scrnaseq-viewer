@@ -73,6 +73,13 @@ def create_control_panel():
                             html.Div([
                                 html.Hr(className="my-2"),
                                 html.Label("Advanced projection", className="fw-semibold small"),
+                                # Geometry knobs (inherit DEFAULT_PARAMS; every default below
+                                # reproduces Fig R2.5). The controls in THIS group shape both the
+                                # flat flower AND the 3D sphere (they set the spherical-cap angle,
+                                # pole and scaling); the "flat-layout relief" group further down is
+                                # flower-only and is hidden under the sphere projection.
+                                html.Div("Cap extent, pole & scaling — affect flower and sphere.",
+                                         className="text-muted fst-italic", style={'fontSize': '11px'}),
                                 html.Label("Nasotemporal extent (deg):", className="mt-1 small"),
                                 dcc.Slider(id='wm-rho-nt', min=40, max=110, step=1, value=82,
                                            marks={40: '40', 82: '82', 110: '110'},
@@ -81,30 +88,12 @@ def create_control_panel():
                                 dcc.Slider(id='wm-rho-dv', min=40, max=110, step=1, value=64,
                                            marks={40: '40', 64: '64', 110: '110'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),
-                                html.Label("Relief gap (deficit mode):", className="mt-2 small"),
-                                dcc.Slider(id='wm-gap', min=0, max=1.5, step=0.05, value=1.0,
-                                           marks={0: '0', 1: '1', 1.5: '1.5'},
-                                           tooltip={'placement': 'bottom', 'always_visible': False}),
-                                html.Label("Petal stretch:", className="mt-2 small"),
-                                dcc.Slider(id='wm-stretch', min=0, max=1.5, step=0.05, value=1.0,
-                                           marks={0: '0', 1: '1', 1.5: '1.5'},
-                                           tooltip={'placement': 'bottom', 'always_visible': False}),
-                                html.Label("Number of cuts (petals):", className="mt-2 small"),
-                                dcc.Slider(id='wm-cuts', min=0, max=8, step=1, value=4,
-                                           marks={0: '0', 2: '2', 4: '4', 6: '6', 8: '8'},
-                                           tooltip={'placement': 'bottom', 'always_visible': False}),
-
-                                # Scaling / geometry knobs (inherit DEFAULT_PARAMS; every
-                                # default below reproduces Fig R2.5). Each is always shown so
-                                # the layout effect is explorable; labels note when one only
-                                # applies in a particular mode.
-                                html.Hr(className="my-2"),
                                 dcc.Checklist(
                                     id='wm-symmetric',
                                     options=[{'label': ' Symmetric per-side scaling (equalize opposing petals)',
                                               'value': 'enabled'}],
                                     value=['enabled'],   # R2.5; untick -> p99 keeps true NT/DV asymmetry
-                                    className="small mb-1",
+                                    className="small mb-1 mt-2",
                                 ),
                                 html.Label("Pole (score origin):", className="mt-1 small"),
                                 dcc.RadioItems(
@@ -133,21 +122,44 @@ def create_control_panel():
                                 dcc.Slider(id='wm-pow', min=1.0, max=3.0, step=0.1, value=1.6,
                                            marks={1: '1', 1.6: '1.6', 2: '2', 3: '3'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),
-                                html.Label("Relief mode:", className="mt-2 small"),
-                                dcc.RadioItems(
-                                    id='wm-gap-mode',
-                                    options=[
-                                        {'label': 'deficit (curvature-true rifts)', 'value': 'deficit'},
-                                        {'label': 'linear (V-notch)', 'value': 'linear'},
-                                    ],
-                                    value='deficit',
-                                    className="small mb-1",
-                                    labelStyle={'display': 'block'},
-                                ),
-                                html.Label("Linear rip width (relief = linear):", className="mt-1 small"),
-                                dcc.Slider(id='wm-gap-frac', min=0.0, max=1.0, step=0.05, value=0.5,
-                                           marks={0: '0', 0.5: '0.5', 1: '1'},
-                                           tooltip={'placement': 'bottom', 'always_visible': False}),
+
+                                # Flat-layout relief: the orange-peel cuts / wedge gaps / petal
+                                # stretch that turn the flat disk into a dissected whole-mount.
+                                # These are purely a FLATTENING device -- a sphere has no curvature
+                                # deficit to relieve -- so the sphere projection hides this group
+                                # (toggle_wholemount_relief). Defaults reproduce Fig R2.5.
+                                html.Div([
+                                    html.Hr(className="my-2"),
+                                    html.Label("Flat-layout relief (flower only)",
+                                               className="fw-semibold small"),
+                                    html.Label("Number of cuts (petals):", className="mt-1 small"),
+                                    dcc.Slider(id='wm-cuts', min=0, max=8, step=1, value=4,
+                                               marks={0: '0', 2: '2', 4: '4', 6: '6', 8: '8'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                    html.Label("Relief gap (deficit mode):", className="mt-2 small"),
+                                    dcc.Slider(id='wm-gap', min=0, max=1.5, step=0.05, value=1.0,
+                                               marks={0: '0', 1: '1', 1.5: '1.5'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                    html.Label("Relief mode:", className="mt-2 small"),
+                                    dcc.RadioItems(
+                                        id='wm-gap-mode',
+                                        options=[
+                                            {'label': 'deficit (curvature-true rifts)', 'value': 'deficit'},
+                                            {'label': 'linear (V-notch)', 'value': 'linear'},
+                                        ],
+                                        value='deficit',
+                                        className="small mb-1",
+                                        labelStyle={'display': 'block'},
+                                    ),
+                                    html.Label("Linear rip width (relief = linear):", className="mt-1 small"),
+                                    dcc.Slider(id='wm-gap-frac', min=0.0, max=1.0, step=0.05, value=0.5,
+                                               marks={0: '0', 0.5: '0.5', 1: '1'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                    html.Label("Petal stretch:", className="mt-2 small"),
+                                    dcc.Slider(id='wm-stretch', min=0, max=1.5, step=0.05, value=1.0,
+                                               marks={0: '0', 1: '1', 1.5: '1.5'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                ], id='wholemount-relief-controls'),
                             ], id='wholemount-advanced', style={'display': 'none'},
                                className="mb-2"),
 
