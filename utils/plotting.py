@@ -970,9 +970,15 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
 def create_group_expression_figure(
     df, gene, group_by, *, color_map=None, category_order=None,
     positive_only=True, min_cells_pseudobulk=10, jitter_skip_threshold=2000,
-    norm_target=1e4,
+    norm_target=1e4, value_is_gene=True,
 ):
-    """NPY-style two-panel expression figure for one gene across cell groups.
+    """NPY-style two-panel figure for one value across cell groups.
+
+    value_is_gene=True (default): Panel A is the depth-normalised log1p(CP) pseudobulk
+    (raw counts reconstructed from .X + nCount_RNA), Panel B the positive-cell violin.
+    value_is_gene=False (a continuous .obs variable): the gene-specific count
+    reconstruction does not apply, so Panel A becomes the simple per-(group x replicate)
+    MEAN of the variable and Panel B an all-cell violin.
 
     Plotly reproduction of scripts/viewer_full_chick/16b_npy_figure.R.
 
@@ -1020,33 +1026,38 @@ def create_group_expression_figure(
     def gcolor(g):
         return full_cmap[g]  # _resolve_color_map covers every category in `order`
 
-    # Panel A (pseudobulk) needs a replicate, a per-cell depth, AND a known CP
-    # normalisation target so raw counts can be reconstructed. norm_target carries the
-    # detected value (None when .X is not a clean log1p(CP*), e.g. z-scored).
-    has_cols = ('ncount' in d.columns and 'replicate' in d.columns
-                and d['ncount'].notna().any() and d['replicate'].notna().any())
-    draw_panel_a = has_cols and bool(norm_target)
-    # Reason Panel A is omitted DESPITE the data carrying a replicate + depth (so the
-    # user can tell "not recognised" from "no replicate configured"); surfaced below.
-    pb_omit_reason = (".X is not a recognised log1p(CP) normalisation"
-                      if (has_cols and not norm_target) else None)
-    if draw_panel_a:
-        # Verify raw_i = expm1(X)*nCount/norm_target lands on integers for this gene;
-        # if .X was normalised on a depth other than nCount_RNA, omit Panel A rather
-        # than draw unverified pseudobulk.
-        nc = pd.to_numeric(d['ncount'], errors='coerce').to_numpy()
-        raw = np.expm1(d['expr'].to_numpy()) * nc / float(norm_target)
-        raw_pos = raw[np.isfinite(raw) & (d['expr'].to_numpy() > 0)]
-        if raw_pos.size and float(np.max(np.abs(raw_pos - np.round(raw_pos)))) > 1e-2:
-            draw_panel_a = False
-            pb_omit_reason = ".X does not appear normalised on nCount_RNA"
+    # Panel A draw condition. For a GENE it needs a replicate, a per-cell depth AND a known
+    # CP normalisation target (so raw counts can be reconstructed and verified integer-like).
+    # For a continuous METADATA variable the per-replicate mean only needs a replicate.
+    if value_is_gene:
+        has_cols = ('ncount' in d.columns and 'replicate' in d.columns
+                    and d['ncount'].notna().any() and d['replicate'].notna().any())
+        draw_panel_a = has_cols and bool(norm_target)
+        # Reason Panel A is omitted DESPITE the data carrying a replicate + depth (so the
+        # user can tell "not recognised" from "no replicate configured"); surfaced below.
+        pb_omit_reason = (".X is not a recognised log1p(CP) normalisation"
+                          if (has_cols and not norm_target) else None)
+        if draw_panel_a:
+            # Verify raw_i = expm1(X)*nCount/norm_target lands on integers for this gene;
+            # if .X was normalised on a depth other than nCount_RNA, omit Panel A rather
+            # than draw unverified pseudobulk.
+            nc = pd.to_numeric(d['ncount'], errors='coerce').to_numpy()
+            raw = np.expm1(d['expr'].to_numpy()) * nc / float(norm_target)
+            raw_pos = raw[np.isfinite(raw) & (d['expr'].to_numpy() > 0)]
+            if raw_pos.size and float(np.max(np.abs(raw_pos - np.round(raw_pos)))) > 1e-2:
+                draw_panel_a = False
+                pb_omit_reason = ".X does not appear normalised on nCount_RNA"
+    else:
+        draw_panel_a = ('replicate' in d.columns and d['replicate'].notna().any())
+        pb_omit_reason = None
 
     rows = 2 if draw_panel_a else 1
     titles = []
+    pa_word = "Pseudobulk" if value_is_gene else "Mean"
     if draw_panel_a:
-        titles.append(f"Pseudobulk {gene} per population x replicate "
+        titles.append(f"{pa_word} {gene} per population x replicate "
                       f"(n = replicates passing the >={int(min_cells_pseudobulk)}-cell gate; dot size ~ n cells)")
-    pos_label = f"{gene}+ cells only" if positive_only else "all cells"
+    pos_label = (f"{gene}+ cells only" if positive_only else "all cells") if value_is_gene else "all cells"
     titles.append(f"Per-cell {gene} ({pos_label}), by population")
 
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.10,
@@ -1055,20 +1066,28 @@ def create_group_expression_figure(
 
     # ---- Panel A: pseudobulk per (group x replicate); dot size grows with n cells ----
     if draw_panel_a:
-        cells = d[d['ncount'].notna()].copy()
-        cells['raw'] = np.expm1(cells['expr'].to_numpy()) * cells['ncount'].to_numpy() / float(norm_target)
-        cells = cells[np.isfinite(cells['raw'])]  # drop any non-finite reconstruction
-        grouped = cells.groupby([group_by, 'replicate'], observed=True)
-        pb_all = grouped.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
-                             n=('expr', 'size')).reset_index()
-        pb_all = pb_all[pb_all['depth'] > 0].copy()              # usable-depth replicate units
+        if value_is_gene:
+            # log1p(CP) pseudobulk: reconstruct raw counts, sum per replicate, renormalise.
+            cells = d[d['ncount'].notna()].copy()
+            cells['raw'] = np.expm1(cells['expr'].to_numpy()) * cells['ncount'].to_numpy() / float(norm_target)
+            cells = cells[np.isfinite(cells['raw'])]  # drop any non-finite reconstruction
+            grouped = cells.groupby([group_by, 'replicate'], observed=True)
+            pb_all = grouped.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
+                                 n=('expr', 'size')).reset_index()
+            pb_all = pb_all[pb_all['depth'] > 0].copy()          # usable-depth replicate units
+            pb_all['pb'] = np.log1p(pb_all['raw_sum'] / pb_all['depth'] * float(norm_target))
+        else:
+            # Continuous metadata: pseudobulk = the simple per-(group x replicate) MEAN of
+            # the variable (no count reconstruction / depth normalisation applies).
+            cells = d[d['replicate'].notna()].copy()
+            grouped = cells.groupby([group_by, 'replicate'], observed=True)
+            pb_all = grouped.agg(pb=('expr', 'mean'), n=('expr', 'size')).reset_index()
         pb_df = pb_all[pb_all['n'] >= int(min_cells_pseudobulk)].copy()
         # Replicate-dot counts per population: K = usable units, k = units passing the
         # >=min_cells gate. k < K is exactly why populations show different numbers of
         # pseudobulk dots, so both are surfaced as a per-population label below.
         n_total_g = pb_all.groupby(group_by, observed=True).size().to_dict()
         n_shown_g = pb_df.groupby(group_by, observed=True).size().to_dict()
-        pb_df['pb'] = np.log1p(pb_df['raw_sum'] / pb_df['depth'] * float(norm_target))
         n_ref = max(1, int(pb_df['n'].max())) if len(pb_df) else 1
         # diameter grows with sqrt(n); +6px floor keeps small replicates visible
         # (so size increases with n but is not strictly area-proportional).
@@ -1085,7 +1104,7 @@ def create_group_expression_figure(
                 showlegend=False,
                 customdata=np.stack([sub['replicate'].astype(str), sub['n']], axis=-1),
                 hovertemplate=(f"{g}<br>replicate=%{{customdata[0]}}<br>"
-                               f"pseudobulk {gene}=%{{y:.3f}}<br>n cells=%{{customdata[1]}}<extra></extra>"),
+                               f"{pa_word.lower()} {gene}=%{{y:.3f}}<br>n cells=%{{customdata[1]}}<extra></extra>"),
             ), row=1, col=1)
             m = float(sub['pb'].mean())
             fig.add_trace(go.Scatter(
@@ -1108,15 +1127,25 @@ def create_group_expression_figure(
                     x=[pos_index[g]], y=[a_lab], mode='text', text=[label],
                     textfont=dict(size=9, color='grey'), showlegend=False, hoverinfo='skip',
                 ), row=1, col=1)
-        cp_label = "log1p(CP10K)" if abs(float(norm_target) - 1e4) < 1.0 else f"log1p(CP/{float(norm_target):g})"
-        fig.update_yaxes(title_text=f"Pseudobulk {gene}<br>{cp_label}", row=1, col=1)
+        if value_is_gene:
+            cp_label = "log1p(CP10K)" if abs(float(norm_target) - 1e4) < 1.0 else f"log1p(CP/{float(norm_target):g})"
+            fig.update_yaxes(title_text=f"Pseudobulk {gene}<br>{cp_label}", row=1, col=1)
+        else:
+            fig.update_yaxes(title_text=f"Mean {gene}<br>per replicate", row=1, col=1)
 
-    # ---- Panel B: per-cell violins of (positive) cells ----
-    pos_cells = d[d['expr'] > 0].copy() if positive_only else d.copy()
+    # ---- Panel B: per-cell violins (positive cells for a gene; all cells for metadata) ----
+    pos_cells = d[d['expr'] > 0].copy() if (value_is_gene and positive_only) else d.copy()
     if len(pos_cells) == 0 and not draw_panel_a:
-        return _message_figure(f"No {gene}-positive cells to plot for this selection.")
+        return _message_figure(f"No {gene}-positive cells to plot for this selection."
+                               if value_is_gene else "No data to plot for this selection.")
     n_pos = pos_cells.groupby(group_by, observed=True)['expr'].size().to_dict() if len(pos_cells) else {}
-    y_top = float(pos_cells['expr'].max()) if len(pos_cells) else 1.0
+    # Robust label height: a metadata variable can be negative, so offset by the data
+    # range rather than y_top * 1.06 (which would sit below the data for all-negative values).
+    if len(pos_cells):
+        y_top = float(pos_cells['expr'].max()); y_bot = float(pos_cells['expr'].min())
+    else:
+        y_top, y_bot = 1.0, 0.0
+    y_lab = y_top + 0.06 * max(y_top - y_bot, 1.0)
     for g in order:
         i = pos_index[g]
         sub = pos_cells[pos_cells[group_by] == g]
@@ -1138,12 +1167,13 @@ def create_group_expression_figure(
         # Always annotate the positive-cell count (n=0 for groups with none) so a
         # zero-positive group reads as an explicit n=0 rather than a silent gap.
         fig.add_trace(go.Scatter(
-            x=[i], y=[y_top * 1.06], mode='text',
+            x=[i], y=[y_lab], mode='text',
             text=[f"n={int(n_pos.get(g, 0))}"],
             textfont=dict(size=10, color='grey'),
             showlegend=False, hoverinfo='skip',
         ), row=row_b, col=1)
-    fig.update_yaxes(title_text=f"{gene} (log-norm)<br>{pos_label}", row=row_b, col=1)
+    yb = f"{gene} (log-norm)<br>{pos_label}" if value_is_gene else f"{gene}<br>{pos_label}"
+    fig.update_yaxes(title_text=yb, row=row_b, col=1)
     if len(pos_cells) == 0:
         # draw_panel_a is True here (else we returned above): Panel A is informative
         # but no cell is positive -- label the empty violin panel instead of blank.

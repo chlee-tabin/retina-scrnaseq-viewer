@@ -283,10 +283,11 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 value_name = group_meta
                 value_vec = pd.to_numeric(adata.obs[group_meta], errors='coerce').to_numpy()
 
-            # Polished 2-panel figure (pseudobulk per group x replicate + positive-cell
-            # violin) is gene-specific; for a metadata value it falls through to a plain
-            # violin below (no pseudobulk reconstruction, no positive-cell gate).
-            if group_style == 'figure' and value_is_gene:
+            # Polished 2-panel figure. For a gene, Panel A is the depth-normalised log1p(CP)
+            # pseudobulk and Panel B the positive-cell violin; for a continuous metadata
+            # variable, Panel A is the per-replicate MEAN of the variable and Panel B the
+            # all-cell violin (create_group_expression_figure branches on value_is_gene).
+            if group_style == 'figure':
                 fig_df = pd.DataFrame({'expr': value_vec})
                 fig_df[g_disp] = g_series
                 if 'nCount_RNA' in adata.obs.columns:
@@ -301,6 +302,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     color_map=g_cmap, category_order=g_corder,
                     positive_only=positive_only,
                     norm_target=data_store.get('x_norm_target'),
+                    value_is_gene=value_is_gene,
                 )
 
             # Violin / box / strip (and the metadata 'figure' fallback).
@@ -609,6 +611,32 @@ def toggle_group_value_source(group_value_source):
     return {'display': 'block'}, {'display': 'none'}
 
 
+# ---- Group view: only the distribution styles apply to a continuous metadata value ----
+@callback(
+    [Output('group-style', 'options'),
+     Output('group-style', 'value', allow_duplicate=True)],
+    Input('group-value-source', 'value'),
+    State('group-style', 'value'),
+    prevent_initial_call=True
+)
+def restrict_group_styles(group_value_source, current_style):
+    """The dot plot summarizes a GENE set, so it has no meaning for a single continuous
+    metadata variable -- disable it under the metadata value source. The Figure DOES
+    generalize (pseudobulk becomes the per-replicate mean of the variable, the violin is
+    over all cells), so it stays available."""
+    meta = (group_value_source == 'meta')
+    options = [
+        {'label': 'Figure: pseudobulk + per-cell violin', 'value': 'figure'},
+        {'label': 'Violin (all cells)', 'value': 'violin'},
+        {'label': 'Box', 'value': 'box'},
+        {'label': 'Strip', 'value': 'strip'},
+        {'label': 'Dot plot (gene set)', 'value': 'dotplot', 'disabled': meta},
+    ]
+    if meta and current_style == 'dotplot':
+        return options, 'figure'
+    return options, (current_style or 'figure')
+
+
 # ---- F2: populate the group-by / split-by / gene-module dropdowns ----
 @callback(
     [Output('group-by-select', 'options'),
@@ -625,13 +653,14 @@ def toggle_group_value_source(group_value_source):
      Output('group-positive-only', 'value', allow_duplicate=True),
      Output('group-meta-select', 'options'),
      Output('group-meta-select', 'value')],
-    Input('data-store', 'data'),
-    State('url', 'search'),
+    [Input('data-store', 'data')],
+    [State('url', 'search'),
+     State('group-value-source', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def populate_group_controls(data_store, url_search):
+def populate_group_controls(data_store, url_search, group_value_source):
     empty_split = [{'label': '(none)', 'value': ''}]
     if not data_store:
         return [], None, empty_split, '', [], None, [], None, [], None, 'figure', ['enabled'], [], None
@@ -726,8 +755,12 @@ def populate_group_controls(data_store, url_search):
         default_gene = data_store.get('default_gene')
         gene_value = default_gene if default_gene in genes else None
 
-    # Style + positive-cell gate: shared-URL values, else the figure defaults.
-    valid_styles = {'figure', 'violin', 'box', 'strip', 'dotplot'}
+    # Style + positive-cell gate: shared-URL values, else the figure default. Only the
+    # gene-set dot plot is invalid under a metadata value source (the Figure generalizes).
+    if group_value_source == 'meta':
+        valid_styles = {'figure', 'violin', 'box', 'strip'}
+    else:
+        valid_styles = {'figure', 'violin', 'box', 'strip', 'dotplot'}
     group_style = state['group_style'] if state.get('group_style') in valid_styles else 'figure'
     positive_only = state.get('group_positive_only')
     if not isinstance(positive_only, list):
