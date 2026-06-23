@@ -586,7 +586,14 @@ def create_group_expression_plot(df, gene, group_by, split_by=None, style='violi
     )
 
     if style == 'box':
-        fig = px.box(plot_df, points=False, **common)
+        # On ALL cells a zero-inflated gene's box collapses to a flat line at 0
+        # (median = Q1 = Q3 = 0): only the whisker "range" shows, no IQR box. Box the
+        # DETECTED cells (expr > 0) so the quartile box is meaningful; the title flags it.
+        box_df = plot_df[plot_df['expr'] > 0]
+        if len(box_df) == 0:
+            return _message_figure(f"No {gene}-positive cells to box-plot for this selection.")
+        box_common = {**common, 'title': f"{gene} expression by {group_by} (detected cells, expr > 0)"}
+        fig = px.box(box_df, points=False, **box_common)
     elif style == 'strip':
         fig = px.strip(plot_df, **common)
     else:  # 'violin' (default)
@@ -894,7 +901,8 @@ def create_group_expression_figure(
     rows = 2 if draw_panel_a else 1
     titles = []
     if draw_panel_a:
-        titles.append(f"Pseudobulk {gene} per population x replicate (dot size increases with n cells)")
+        titles.append(f"Pseudobulk {gene} per population x replicate "
+                      f"(n = replicates passing the >={int(min_cells_pseudobulk)}-cell gate; dot size ~ n cells)")
     pos_label = f"{gene}+ cells only" if positive_only else "all cells"
     titles.append(f"Per-cell {gene} ({pos_label}), by population")
 
@@ -908,9 +916,15 @@ def create_group_expression_figure(
         cells['raw'] = np.expm1(cells['expr'].to_numpy()) * cells['ncount'].to_numpy() / float(norm_target)
         cells = cells[np.isfinite(cells['raw'])]  # drop any non-finite reconstruction
         grouped = cells.groupby([group_by, 'replicate'], observed=True)
-        pb_df = grouped.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
-                            n=('expr', 'size')).reset_index()
-        pb_df = pb_df[(pb_df['depth'] > 0) & (pb_df['n'] >= int(min_cells_pseudobulk))].copy()
+        pb_all = grouped.agg(raw_sum=('raw', 'sum'), depth=('ncount', 'sum'),
+                             n=('expr', 'size')).reset_index()
+        pb_all = pb_all[pb_all['depth'] > 0].copy()              # usable-depth replicate units
+        pb_df = pb_all[pb_all['n'] >= int(min_cells_pseudobulk)].copy()
+        # Replicate-dot counts per population: K = usable units, k = units passing the
+        # >=min_cells gate. k < K is exactly why populations show different numbers of
+        # pseudobulk dots, so both are surfaced as a per-population label below.
+        n_total_g = pb_all.groupby(group_by, observed=True).size().to_dict()
+        n_shown_g = pb_df.groupby(group_by, observed=True).size().to_dict()
         pb_df['pb'] = np.log1p(pb_df['raw_sum'] / pb_df['depth'] * float(norm_target))
         n_ref = max(1, int(pb_df['n'].max())) if len(pb_df) else 1
         # diameter grows with sqrt(n); +6px floor keeps small replicates visible
@@ -938,6 +952,19 @@ def create_group_expression_figure(
                 showlegend=False,
                 hovertemplate=f"{g}<br>mean across replicates={m:.3f}<extra></extra>",
             ), row=1, col=1)
+        # Per-population replicate-dot count (mirrors Panel B's n=), so the varying number
+        # of pseudobulks -- driven by the >=min_cells gate -- is explicit. "n=k" when all
+        # usable units pass; "n=k/K" when K-k were gated out (k can be 0).
+        if len(pb_df):
+            a_top = float(pb_df['pb'].max()); a_bot = float(pb_df['pb'].min())
+            a_lab = a_top + 0.12 * max(a_top - a_bot, 0.5)
+            for g in order:
+                k = int(n_shown_g.get(g, 0)); K = int(n_total_g.get(g, 0))
+                label = f"n={k}" if k == K else f"n={k}/{K}"
+                fig.add_trace(go.Scatter(
+                    x=[pos_index[g]], y=[a_lab], mode='text', text=[label],
+                    textfont=dict(size=9, color='grey'), showlegend=False, hoverinfo='skip',
+                ), row=1, col=1)
         cp_label = "log1p(CP10K)" if abs(float(norm_target) - 1e4) < 1.0 else f"log1p(CP/{float(norm_target):g})"
         fig.update_yaxes(title_text=f"Pseudobulk {gene}<br>{cp_label}", row=1, col=1)
 
