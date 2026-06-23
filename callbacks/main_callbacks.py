@@ -1,5 +1,5 @@
 from dash import Input, Output, State, callback
-from utils.data_loading import load_adata, load_dataset_config
+from utils.data_loading import load_adata, load_dataset_config, gene_search_options
 from utils.plotting import (
     create_scatter_plot,
     create_binned_plot,
@@ -146,16 +146,16 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
     # can explore them. Each stays at the R2.5 value unless its control overrides it.
     if symmetric is not None:
         P['symmetric'] = bool(symmetric)   # False -> p99 per-axis scaling (true asymmetry)
-    if dewarp:
+    if dewarp is not None:
         P['dewarp'] = dewarp               # 'arcsin' (R2.5) | 'pow' | 'none'
     if pow_p is not None:
         P['pow_p'] = float(pow_p)          # exponent for dewarp='pow'
-    if gap_mode:
+    if gap_mode is not None:
         P['gap_mode'] = gap_mode           # 'deficit' (R2.5) | 'linear'
     if gap_frac is not None:
         P['gap_frac'] = float(gap_frac)    # rip width for gap_mode='linear'
     if pole is not None:
-        P['pole'] = pole                   # (0.0, 0.0) origin (R2.5) | 'median'
+        P['pole'] = pole                   # 'origin' (R2.5) | 'median'
     return P
 
 
@@ -347,7 +347,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
                     symmetric=_on(wm_symmetric), dewarp=wm_dewarp, pow_p=wm_pow,
                     gap_mode=wm_gap_mode, gap_frac=wm_gap_frac,
-                    pole=((0.0, 0.0) if wm_pole != 'median' else 'median'),
+                    pole=('median' if wm_pole == 'median' else 'origin'),
                 )
                 # Fit the pole + per-axis scale ONCE from the cells and reuse it for every
                 # warp (scatter cells AND the binned grid), so the two views share one basis
@@ -455,8 +455,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 base = gene if color_by == 'gene_expression' else str(color_by)
                 cl = f"{base} (% detected)" if bin_stat == 'frac_pos' else base
                 fig = create_wholemount_binned_figure(
-                    adata.obs[wholemount.DV_COL].to_numpy(),
-                    adata.obs[wholemount.NT_COL].to_numpy(),
+                    dv_cells,
+                    nt_cells,
                     np.asarray(color_series, dtype=float),
                     bin_size=bin_number,
                     percentile=percentile,
@@ -803,7 +803,7 @@ def populate_group_controls(data_store, url_search, group_value_source):
 def update_group_gene_select(data_store, search_value):
     if not data_store or 'genes' not in data_store:
         return []
-    return _gene_search_options(data_store['genes'], search_value)
+    return gene_search_options(data_store['genes'], search_value)
 
 
 # ---- F4: show/hide the second-gene dropdown ----
@@ -829,26 +829,4 @@ def toggle_compare_genes(compare_genes):
 def update_gene_select_2(data_store, search_value):
     if not data_store or 'genes' not in data_store:
         return []
-    return _gene_search_options(data_store['genes'], search_value)
-
-
-def _gene_search_options(genes, search_value):
-    """Fuzzy starts-with/contains gene search shared by the extra gene dropdowns.
-
-    Mirrors the logic in callbacks.dataset_callbacks.update_gene_select: when a
-    search string is present, starts-with matches sort ahead of contains
-    matches; otherwise all genes are returned alphabetically.
-    """
-    if search_value:
-        sv = search_value.lower()
-        starts_with = []
-        contains = []
-        for gene in genes:
-            gl = gene.lower()
-            if gl.startswith(sv):
-                starts_with.append(gene)
-            elif sv in gl:
-                contains.append(gene)
-        matching = sorted(starts_with) + sorted(contains)
-        return [{'label': g, 'value': g} for g in matching]
-    return [{'label': g, 'value': g} for g in sorted(genes)]
+    return gene_search_options(data_store['genes'], search_value)

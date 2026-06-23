@@ -18,8 +18,8 @@ def _is_wholemount(embedding):
 def _message_figure(text):
     """Return an empty figure with a centered, user-friendly message.
 
-    Mirrors callbacks.main_callbacks._message_figure but lives here so the
-    plotting helpers have a self-contained fallback (no callback import).
+    The single canonical message-figure helper; also imported by
+    callbacks.main_callbacks (which keeps no copy of its own).
     """
     fig = go.Figure()
     fig.add_annotation(
@@ -531,12 +531,14 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     cross a relief rip. Because the binning happens in score space (where the cells
     actually live) and warping only repositions a contiguous grid, no stray tiles appear.
 
-    Mirrors flower_reproject.render_binned: bin -> mask (min_cells) -> warp vertices ->
-    drop rip-crossing quads. Filled quads are bucketed by colour into a few traces (so
-    the whole map is cheap), with an invisible colorbar carrier and bin-centre hover
-    markers for read-out.
+    Follows flower_reproject.render_binned (bin -> mask (min_cells) -> warp vertices ->
+    drop rip-crossing quads) with one deliberate difference: the warp uses the CELL-derived
+    basis (the injected fit / compute_scale_fit) rather than re-fitting the scale to the
+    grid vertices as the source does, so the binned map shares the per-cell scatter's basis.
+    Filled quads are bucketed by colour into a few traces (so the whole map is cheap), with
+    an invisible colorbar carrier and bin-centre hover markers for read-out.
     """
-    P = dict(wm.LOCKED_PARAMS if params is None else params)
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
     dv = np.asarray(dv, dtype=float)
     nt = np.asarray(nt, dtype=float)
     v = np.asarray(vals, dtype=float)
@@ -544,6 +546,11 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     dv, nt, v = dv[finite], nt[finite], v[finite]
     if dv.size == 0:
         return _message_figure("No cells with DV.Score / NT.Score to project.")
+    # When called without a precomputed fit (params=None / standalone), derive the pole +
+    # per-axis scale from THESE cells so the grid warp uses the cell basis, not the grid's
+    # own spread -- the divergence compute_scale_fit exists to prevent.
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
 
     is_pct = (bin_stat == 'frac_pos')
 

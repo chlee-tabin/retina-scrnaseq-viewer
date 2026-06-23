@@ -80,7 +80,7 @@ def create_control_panel():
                                 dcc.Slider(id='wm-rho-dv', min=40, max=110, step=1, value=64,
                                            marks={40: '40', 64: '64', 110: '110'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),
-                                html.Label("Relief gap (rip width):", className="mt-2 small"),
+                                html.Label("Relief gap (deficit mode):", className="mt-2 small"),
                                 dcc.Slider(id='wm-gap', min=0, max=1.5, step=0.05, value=1.0,
                                            marks={0: '0', 1: '1', 1.5: '1.5'},
                                            tooltip={'placement': 'bottom', 'always_visible': False}),

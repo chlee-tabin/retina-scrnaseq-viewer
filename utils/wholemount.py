@@ -15,8 +15,10 @@ Geometric model (verbatim from the source):
     curvature deficit, so the petals separate toward the rim (orange-peel relief).
   - anisotropy: rho_max larger toward NT, so the nasal/temporal petals run longer.
 
-This module contains ONLY the per-cell coordinate transform (a pure function of the two
-score arrays + numpy); the matplotlib binning/rendering in the source script is not
+This module provides the per-cell coordinate transform (flower_transform, a pure function
+of the two score arrays + numpy) plus compute_scale_fit -- a once-per-render fit of the
+pole and per-axis scale FROM THE CELLS, reused across the scatter and binned warps so the
+two views share one basis. The matplotlib binning/rendering in the source script is not
 ported -- the Dash viewer reuses its own binning/smoothing pipeline on the warped (X, Y).
 
 Orientation (FISH flat-mount convention): nasal = right, dorsal = top, temporal = left,
@@ -25,7 +27,8 @@ ventral = bottom; HAA at centre.
 import numpy as np
 import pandas as pd
 
-# Defaults copied verbatim from flower_reproject.DEFAULT_PARAMS.
+# Coordinate-relevant defaults from flower_reproject.DEFAULT_PARAMS (the render-only
+# missing_nasal_* keys are dropped; see the module docstring).
 DEFAULT_PARAMS = dict(
     pole=(0.0, 0.0),               # HAA pole = score origin (balanced D/V & N/T module scores)
     symmetric=True,                # equalize N/T and D/V extents via per-direction scaling
@@ -62,6 +65,8 @@ LOCKED_PARAMS = dict(
 def _resolve_pole(dv, nt, pole):
     if pole == "median":
         return float(np.nanmedian(dv)), float(np.nanmedian(nt))
+    if pole == "origin":
+        return 0.0, 0.0
     return float(pole[0]), float(pole[1])
 
 

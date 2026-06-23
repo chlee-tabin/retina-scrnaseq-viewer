@@ -8,7 +8,7 @@
 
 FROM python:3.11-slim
 
-# System libs commonly needed by the scientific stack (scanpy/anndata/h5py/scipy).
+# System libs commonly needed by the scientific stack (anndata/h5py/scipy).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \

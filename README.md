@@ -80,8 +80,10 @@ Behavior is controlled by environment variables (all optional):
 | `HF_DATA_REPO_TYPE` | `dataset` | Type of the `HF_DATA_REPO` (`dataset`, `model`, or `space`). |
 | `HF_TOKEN` | _(unset)_ | Access token, only needed while `HF_DATA_REPO` is **private**. Set it as a Space *secret*, never in code. |
 
-Plot defaults (colors, marker size, bin size, etc.) live in
-[`config.yml`](config.yml).
+Per-dataset display knobs (`smooth_sigma`, `min_cells_per_bin`, `color_floor`,
+`gene_modules`, `default_gene`, `annotation_colors`, …) live in
+[`datasets_config.yml`](datasets_config.yml); other plot defaults are set in
+`utils/plotting.py`.
 
 ## Data (not bundled)
 
@@ -147,11 +149,10 @@ this README, which Hugging Face reads, and the [`Dockerfile`](Dockerfile)).
 ```
 app.py                 # Dash app, layout, core callbacks, /download route, entrypoint
 datasets_config.yml    # Declares the datasets served (titles, file paths, metadata)
-config.yml             # Plot/layout defaults
 requirements.txt       # Python dependencies
 Dockerfile             # Hugging Face Docker Space build
 callbacks/             # Dash callbacks (dataset, selection, URL, plotting, status)
 components/            # Reusable UI pieces (sidebar, status bar)
 layouts/               # Page layout (sidebar + main panel)
-utils/                 # Data loading, HF data provisioning, plotting, state, config
+utils/                 # Data loading, HF data provisioning, plotting, state, whole-mount transform
 ```
