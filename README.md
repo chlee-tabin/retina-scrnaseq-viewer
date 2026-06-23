@@ -13,24 +13,36 @@ pinned: false
 An interactive [Plotly Dash](https://dash.plotly.com/) application for exploring
 single-cell RNA-seq data with spatial/topographic structure from the developing
 retina. It accompanies a manuscript on topographic gene expression in the early
-retina. Users can select a dataset, choose an embedding (UMAP or a **custom
-embedding built from two metadata score axes**, e.g. dorsoventral vs.
-nasotemporal), color cells by a metadata field or by the expression of a
-searchable gene, and optionally switch to a binned ("metacell") density view.
-Views can be shared via an encoded URL, and each dataset's `.h5ad` is available
-for download.
+retina (the bioRxiv preprint is linked at the top of the app). Two views are
+available:
+
+- **Embedding / spatial map** — color cells on a UMAP or on a **custom embedding
+  built from two metadata score axes** (e.g. dorsoventral vs. nasotemporal), by a
+  metadata field or by the expression of a searchable gene. Optionally switch to a
+  binned ("metacell") view, a per-bin **"% positive (detected)"** map, a **two-gene**
+  side-by-side comparison, or the **whole-mount ("flower") reprojection** that warps
+  the flat DV/NT plane into a flat-mounted retina (with adjustable projection
+  parameters).
+- **Expression by group** — the distribution of a gene's expression (or **any
+  continuous metadata variable**) across the categories of an `.obs` column, as a
+  violin / box / strip, a gene-set dot plot, or a pseudobulk + per-cell figure.
+
+Views (including all of the above controls) can be shared via an encoded URL, and
+each dataset's `.h5ad` is available for download.
 
 ## Datasets
 
 The datasets served are declared in [`datasets_config.yml`](datasets_config.yml).
 The current configuration ships three cross-species retinal progenitor cell
 (RPC) datasets (chick, human, mouse), each with inferred 2D topographic
-coordinates (`DV.Score`, `NT.Score`), plus the prior mouse alignment retained as
-a labeled **legacy** entry:
+coordinates (`DV.Score`, `NT.Score`); a full chick retina object spanning all
+cell classes (UMAP-navigable, no topographic scores); and the prior mouse
+alignment retained as a labeled **legacy** entry:
 
 | ID | Title | Cells | Source / attribution |
 |----|-------|-------|----------------------|
 | `chick_rpc` | Chick Retinal Progenitor Cells | 29,025 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Emerson et al.) |
+| `chick_full` | Chick Retina — Full (all cell classes) | 85,135 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Emerson et al.); UMAP-navigable, no DV/NT scores (those apply to `chick_rpc`) |
 | `human_rpc` | Human Retinal Progenitor Cells | 21,793 | Reprocessed from GEO **GSE138002** (Sridhar et al.), **GSE234963**, **GSE246169** |
 | `mouse_rpc` | Mouse Retinal Progenitor Cells | 26,505 | Reprocessed (Cell Ranger 9.0.1 / GRCm39) from GEO **GSE118614** (Clark et al.), **GSE139904** (Balasubramanian et al., control cells only), **GSE149040** (Wu et al.), **GSE122466** (Lo Giudice et al.) |
 | `mouse_rpc_legacy` | Mouse Retinal Progenitor Cells (legacy) | 25,202 | **Superseded** — original four-library alignment (older reference) from GEO **GSE139904**, **GSE118614**, which pooled wild-type + Fgfr1/2-mutant cells. Retained only for reproducibility; not for new analysis. |
@@ -81,6 +93,7 @@ two supported ways to provide them at runtime:
 
    ```
    $DATA_DIR/20250604_chick_RPC.h5ad
+   $DATA_DIR/20260620_chick_full.h5ad
    $DATA_DIR/20250604_human_RPC.h5ad
    $DATA_DIR/20260528_mouse_RPC_cr9_e13e16.h5ad
    $DATA_DIR/20250604_mouse_RPC.h5ad          # legacy (superseded)
