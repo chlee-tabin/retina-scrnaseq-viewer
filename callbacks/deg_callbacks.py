@@ -299,23 +299,28 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
                                     x_label=custom_x, y_label=custom_y,
                                     foreground_label=sel_info.get('solo', 'A'))
         min_cells = int(min_cells or 50)
-
+        # Tag the slow-path (post-deg_from_labels) error outputs with the run signature too, so
+        # gate_recap_status can drop a late error that finished after the user changed inputs --
+        # otherwise a stale "too few replicates"/recap lingers on the new view. No records, so the
+        # volcano/table/CSV stay empty either way. (The instant guard errors above can't race.)
+        err = {'sig': _run_signature(verts, data_store, min_cells, custom_x, custom_y,
+                                     embedding, projection, color_by, enable_binning)}
         try:
             res, info = deg_from_labels(
                 adata, data_store.get('replicate_columns', []), labels,
                 min_cells=min_cells, min_frac=0.5,
                 norm_target=data_store.get('x_norm_target'))
         except NoReplicate:
-            return None, recap, dbc.Alert(
+            return err, recap, dbc.Alert(
                 "This dataset has no configured replicate unit (e.g. library × genotype), "
                 "so a pseudobulk test is not possible here.", color="warning")
         except InsufficientReplicates as e:
-            return None, recap, dbc.Alert(
+            return err, recap, dbc.Alert(
                 f"Too few pseudobulk replicates ≥ {e.min_cells} cells per side "
                 f"(A: {e.n_a}, B: {e.n_b}). Draw a larger ROI, or lower the min-cells floor.",
                 color="warning")
         except DEGError as e:
-            return None, recap, dbc.Alert(str(e), color="warning")
+            return err, recap, dbc.Alert(str(e), color="warning")
 
         info.update(sel_info)
         # NaN padj/LFC (low-count genes) is not valid JSON for a dcc.Store -> None.
@@ -421,11 +426,13 @@ def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells
 )
 def gate_recap_status(stored, verts, data_store, min_cells, custom_x, custom_y,
                       embedding, projection, color_by, enable_binning):
-    if not stored or not stored.get('records'):
-        raise PreventUpdate   # nothing stored / already cleared by the invalidation callbacks
+    # `stored` carries a signature for BOTH successful runs ({records, sig, ...}) and slow-path
+    # errors ({sig}); validate either. None means already cleared by the invalidation callbacks.
+    if not stored or not stored.get('sig'):
+        raise PreventUpdate
     if stored.get('sig') == _run_signature(verts, data_store, min_cells, custom_x, custom_y,
                                            embedding, projection, color_by, enable_binning):
-        raise PreventUpdate   # fresh result -> leave run_deg_cb's recap + status in place
+        raise PreventUpdate   # fresh result/error -> leave run_deg_cb's recap + status in place
     return _message_figure("Inputs changed — click Run to recompute."), ''
 
 
