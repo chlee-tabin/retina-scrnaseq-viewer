@@ -8,8 +8,10 @@ from utils.plotting import (
     create_dotplot,
     create_dual_gene_figure,
     create_wholemount_binned_figure,
+    create_dual_gene_wholemount_figure,
     create_sphere_figure,
     create_sphere_binned_figure,
+    create_dual_gene_sphere_figure,
     _message_figure,
 )
 import pandas as pd
@@ -395,9 +397,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         )
 
         # ---- Two genes side-by-side (map view, gene-expression color) ----
-        # The 3D sphere renders a single variable; skip the (2D) dual-gene comparison there.
         compare_on = _on(compare_genes)
-        if color_by == 'gene_expression' and compare_on and gene and gene2 and sphere_xyz is None:
+        if color_by == 'gene_expression' and compare_on and gene and gene2:
             missing = [g for g in (gene, gene2) if g not in adata.var_names]
             if missing:
                 return _message_figure(
@@ -406,19 +407,38 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 )
             smooth_on = _on(enable_smoothing)
             smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+            v1, v2 = _gene_vector(adata, gene), _gene_vector(adata, gene2)
+            mc = data_store.get('min_cells_per_bin', 1)
+            cf = data_store.get('color_floor', 0.05)
+            shared = _on(compare_shared_scale)
+            if sphere_xyz is not None:
+                # Two genes on side-by-side 3D spheres (points or binned mesh per panel).
+                return create_dual_gene_sphere_figure(
+                    dv_cells, nt_cells, [v1, v2], [gene, gene2],
+                    binned=binning_on, bin_size=bin_number, percentile=percentile,
+                    smooth_sigma=smooth_sigma, min_cells=mc, color_floor=cf,
+                    shared_scale=shared, bin_stat=(bin_stat or 'mean'), params=proj_params,
+                )
+            if custom_projection == 'flower' and binning_on:
+                # Faithful score-space binned flower per panel (matches the single-gene
+                # binned flower), instead of histogramming the warped per-cell coordinates.
+                return create_dual_gene_wholemount_figure(
+                    dv_cells, nt_cells, [v1, v2], [gene, gene2],
+                    bin_size=bin_number, percentile=percentile, smooth_sigma=smooth_sigma,
+                    min_cells=mc, color_floor=cf, shared_scale=shared,
+                    bin_stat=(bin_stat or 'mean'), params=proj_params,
+                )
             return create_dual_gene_figure(
-                np.asarray(x), np.asarray(y),
-                [_gene_vector(adata, gene), _gene_vector(adata, gene2)],
-                [gene, gene2],
+                np.asarray(x), np.asarray(y), [v1, v2], [gene, gene2],
                 embedding_label,
                 binned=binning_on,
                 bin_size=bin_number,
                 percentile=percentile,
                 smooth_sigma=smooth_sigma,
-                min_cells=data_store.get('min_cells_per_bin', 1),
-                color_floor=data_store.get('color_floor', 0.05),
+                min_cells=mc,
+                color_floor=cf,
                 bin_stat=(bin_stat or 'mean'),
-                shared_scale=_on(compare_shared_scale),
+                shared_scale=shared,
             )
 
         # Handle gene expression
@@ -579,12 +599,17 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
     return options, options, default_x, default_y, container_style
 
 @callback(
-    Output('viz-mode', 'style'),
+    Output('plot-order-controls', 'style'),
     [Input('embedding-select', 'value'),
-     Input('enable-binning', 'value')]
+     Input('enable-binning', 'value'),
+     Input('custom-projection', 'value')]
 )
-def toggle_plot_order(embedding, enable_binning):
-    if embedding == 'custom_embedding' and _on(enable_binning):
+def toggle_plot_order(embedding, enable_binning, custom_projection):
+    # Plot Order is a per-cell SCATTER control (which points draw last/on top). Hide the whole
+    # block (label + radio) whenever the view is NOT a 2D per-cell scatter: any binned
+    # custom-embedding view, or the 3D sphere (points or binned -- depth is z-buffered there,
+    # not data-order). It stays visible for UMAP/PCA scatters and the non-binned flower/raw.
+    if embedding == 'custom_embedding' and (_on(enable_binning) or custom_projection == 'sphere'):
         return {'display': 'none'}
     return {'display': 'block'}
 
@@ -621,6 +646,28 @@ def toggle_wholemount_advanced(custom_projection):
     if custom_projection in ('flower', 'sphere'):
         return {'display': 'block'}
     return {'display': 'none'}
+
+
+@callback(
+    [Output('wm-rho-nt', 'value', allow_duplicate=True),
+     Output('wm-rho-dv', 'value', allow_duplicate=True),
+     Output('wm-gap', 'value', allow_duplicate=True),
+     Output('wm-stretch', 'value', allow_duplicate=True),
+     Output('wm-cuts', 'value', allow_duplicate=True),
+     Output('wm-symmetric', 'value', allow_duplicate=True),
+     Output('wm-pole', 'value', allow_duplicate=True),
+     Output('wm-dewarp', 'value', allow_duplicate=True),
+     Output('wm-pow', 'value', allow_duplicate=True),
+     Output('wm-gap-mode', 'value', allow_duplicate=True),
+     Output('wm-gap-frac', 'value', allow_duplicate=True)],
+    Input('wm-reset', 'n_clicks'),
+    prevent_initial_call=True,
+)
+def reset_wholemount_params(n_clicks):
+    # Restore every Advanced-projection control to its Fig R2.5 default (the values baked into
+    # control_panel.py / wholemount.LOCKED_PARAMS), so the complicated flower/sphere knobs can
+    # be returned to the published preset in one click. Keep these in sync with control_panel.
+    return 82, 64, 1.0, 1.0, 4, ['enabled'], 'origin', 'arcsin', 1.6, 'deficit', 0.5
 
 
 @callback(

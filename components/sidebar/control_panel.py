@@ -210,6 +210,12 @@ def create_control_panel():
                                                marks={0: '0', 1: '1', 1.5: '1.5'},
                                                tooltip={'placement': 'bottom', 'always_visible': False}),
                                 ], id='wholemount-relief-controls'),
+
+                                # Reset every Advanced-projection control to the Fig R2.5
+                                # default in one click (see reset_wholemount_params).
+                                dbc.Button("↺ Reset projection to Fig R2.5 default",
+                                           id='wm-reset', size='sm', color='secondary',
+                                           outline=True, className="mt-3"),
                             ], id='wholemount-advanced', style={'display': 'none'},
                                className="mb-2"),
 
@@ -312,16 +318,18 @@ def create_control_panel():
                        className="mt-3",
                        style={'display': 'none', 'backgroundColor': '#f8f9fa'}),
 
-                    html.Label("Plot Order:", className="mt-3"),
-                    dcc.RadioItems(
-                        id='viz-mode',
-                        options=[
-                            {'label': 'Random', 'value': 'random'},
-                            {'label': 'Ascending', 'value': 'ordered_asc'},
-                            {'label': 'Descending', 'value': 'ordered_desc'}
-                        ],
-                        value='random'
-                    ),
+                    html.Div([
+                        html.Label("Plot Order:", className="mt-3"),
+                        dcc.RadioItems(
+                            id='viz-mode',
+                            options=[
+                                {'label': 'Random', 'value': 'random'},
+                                {'label': 'Ascending', 'value': 'ordered_asc'},
+                                {'label': 'Descending', 'value': 'ordered_desc'}
+                            ],
+                            value='random'
+                        ),
+                    ], id='plot-order-controls'),
                 ], id='map-controls'),
 
                 # ---- GROUP CONTROLS (expression-by-group view) ----

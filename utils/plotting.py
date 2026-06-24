@@ -552,14 +552,42 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     if 'sym_factors' not in P and 'scale' not in P:
         P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
 
-    is_pct = (bin_stat == 'frac_pos')
+    traces, _ = _wholemount_binned_traces(
+        dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
+        color_label=color_label, n_color_bins=n_color_bins)
+    if not traces:
+        return _message_figure("No populated bins to project at this resolution.")
+    fig = go.Figure()
+    for t in traces:
+        fig.add_trace(t)
+    fig.update_layout(
+        title='Whole-mount projection (score-space binned)',
+        plot_bgcolor='white', height=800, showlegend=False,
+        margin=dict(t=60, l=20, r=20, b=20),
+        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False,
+                   scaleanchor='y', scaleratio=1),
+        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+    )
+    return fig
 
-    # Per-bin statistic on the SCORE grid (x = NT, y = DV), via the shared binning math.
-    # H is indexed [nt_bin, dv_bin]; NaN where the bin is below the cell floor.
+
+def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
+                              min_cells=1, color_floor=0.05, bin_stat='mean',
+                              color_label='expression', n_color_bins=24, cmax=None,
+                              colorbar_x=None, showscale=True):
+    """Build the (filled-quad level traces + colorbar carrier + hover) traces for ONE
+    score-space binned FLOWER panel; return (traces, vmax). Shared by the single-gene flower
+    and each panel of the dual-gene flower, so both render the SAME faithful score-space quad
+    map -- not a histogram of warped coords. `dv`/`nt`/`vals` already finite-filtered, `P`
+    already carries a fit. `cmax` overrides the colour-scale max (for a shared scale)."""
+    is_pct = (bin_stat == 'frac_pos')
+    # Per-bin statistic on the SCORE grid (x = NT, y = DV); H is [nt_bin, dv_bin], NaN below floor.
     H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
-        nt, dv, v, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        nt, dv, vals, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
         min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
     vmax = max(float(vmax), 1e-9)
+    cap = float(cmax) if cmax is not None else vmax
     nb = int(bin_size)
 
     # Warp the grid VERTICES ((nb+1) x (nb+1)); keep gore + rho for rip detection.
@@ -570,10 +598,8 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     rho_v = np.asarray(diag['rho']).reshape(NTv.shape)
     rho_join = np.deg2rad({**wm.DEFAULT_PARAMS, **P}['rho_join_deg'])
 
-    # Bucket filled quads by colour level -> a handful of traces instead of thousands.
     buckets = {}
     hx, hy, htext = [], [], []
-    # Bin-centre coordinates (for hover), warped with the same transform.
     nt_c = (nt_edges[:-1] + nt_edges[1:]) / 2
     dv_c = (dv_edges[:-1] + dv_edges[1:]) / 2
     NTc, DVc = np.meshgrid(nt_c, dv_c, indexing='ij')
@@ -588,7 +614,7 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
             gs = gore_v[i:i + 2, j:j + 2]
             if gs.min() != gs.max() and rho_v[i:i + 2, j:j + 2].min() > rho_join:
                 continue   # quad straddles a rip beyond the joined centre -> real slit
-            b = int(min(n_color_bins - 1, max(0, np.floor(z / vmax * n_color_bins))))
+            b = int(min(n_color_bins - 1, max(0, np.floor(z / cap * n_color_bins))))
             xs = [Xv[i, j], Xv[i, j + 1], Xv[i + 1, j + 1], Xv[i + 1, j], Xv[i, j], None]
             ys = [Yv[i, j], Yv[i, j + 1], Yv[i + 1, j + 1], Yv[i + 1, j], Yv[i, j], None]
             buckets.setdefault(b, ([], []))
@@ -596,38 +622,75 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
             hx.append(float(Xc[i, j])); hy.append(float(Yc[i, j]))
             htext.append((f"{z * 100:.1f}% detected" if is_pct else f"{z:.2f}")
                          + f"<br>{int(H_counts[i, j])} cells")
-
-    fig = go.Figure()
     if not buckets:
-        return _message_figure("No populated bins to project at this resolution.")
+        return [], vmax
+
     levels = pcolors.sample_colorscale(
         'viridis', [(b + 0.5) / n_color_bins for b in range(n_color_bins)])
-    for b, (xs, ys) in sorted(buckets.items()):
-        fig.add_trace(go.Scatter(
-            x=xs, y=ys, mode='lines', fill='toself', fillcolor=levels[b],
-            line=dict(width=0), hoverinfo='skip', showlegend=False))
-
-    # Invisible carrier trace for the continuous colorbar.
-    fig.add_trace(go.Scatter(
+    traces = [go.Scatter(x=xs, y=ys, mode='lines', fill='toself', fillcolor=levels[b],
+                         line=dict(width=0), hoverinfo='skip', showlegend=False)
+              for b, (xs, ys) in sorted(buckets.items())]
+    cbar = dict(title=color_label, tickformat='.0%' if is_pct else None)
+    if colorbar_x is not None:
+        cbar.update(x=colorbar_x, len=0.9, thickness=12)
+    traces.append(go.Scatter(   # invisible carrier for the continuous colorbar
         x=[float(np.nanmean(Xc))], y=[float(np.nanmean(Yc))], mode='markers',
-        marker=dict(colorscale='viridis', cmin=0, cmax=vmax, color=[0], size=0.1,
-                    opacity=0, showscale=True,
-                    colorbar=dict(title=color_label,
-                                  tickformat='.0%' if is_pct else None)),
+        marker=dict(colorscale='viridis', cmin=0, cmax=cap, color=[0], size=0.1,
+                    opacity=0, showscale=showscale, colorbar=cbar),
         hoverinfo='skip', showlegend=False))
-    # Invisible bin-centre markers carrying the hover read-out.
-    fig.add_trace(go.Scatter(
+    traces.append(go.Scatter(   # invisible bin-centre markers carrying the hover read-out
         x=hx, y=hy, mode='markers', marker=dict(size=8, opacity=0),
         text=htext, hovertemplate='%{text}<extra></extra>', showlegend=False))
+    return traces, vmax
 
-    fig.update_layout(
-        title='Whole-mount projection (score-space binned)',
-        plot_bgcolor='white', height=800, showlegend=False,
-        margin=dict(t=60, l=20, r=20, b=20),
-        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False,
-                   scaleanchor='y', scaleratio=1),
-        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
-    )
+
+def create_dual_gene_wholemount_figure(dv, nt, vals_list, names, *, bin_size=50, percentile=0.95,
+                                       smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                       shared_scale=False, bin_stat='mean', params=None,
+                                       n_color_bins=24):
+    """Two genes side-by-side as faithful score-space binned FLOWERS (two xy panels), so the
+    binned comparison matches the single-gene binned flower instead of histogramming warped
+    coords (the source of the "looks like different parameters" mismatch). Independent colour
+    scales by default; shared_scale=True puts both panels on one absolute scale."""
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt)
+    dv, nt = dv[finite], nt[finite]
+    vals_list = [np.asarray(v, dtype=float)[finite] for v in vals_list]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
+    is_pct = (bin_stat == 'frac_pos')
+
+    cmax_shared = None
+    if shared_scale:
+        ms = [vm for v in vals_list for _, vm in [_wholemount_binned_traces(
+            dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+            min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label='',
+            n_color_bins=n_color_bins)]]
+        cmax_shared = max(ms) if ms else None
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=[str(n) for n in names],
+                        horizontal_spacing=0.08)
+    cbx = [0.43, 1.0]
+    for idx, (v, name) in enumerate(zip(vals_list, names)):
+        col = idx + 1
+        traces, _ = _wholemount_binned_traces(
+            dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+            min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
+            color_label=_dual_colorbar_title(name, shared_scale, is_pct),
+            n_color_bins=n_color_bins, cmax=cmax_shared, colorbar_x=cbx[idx])
+        if not traces:
+            continue
+        for t in traces:
+            fig.add_trace(t, row=1, col=col)
+    for c in (1, 2):
+        fig.update_xaxes(showgrid=False, showticklabels=False, zeroline=False, row=1, col=c)
+        fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False,
+                         scaleanchor=('x' if c == 1 else 'x2'), scaleratio=1, row=1, col=c)
+    fig.update_layout(title='Whole-mount flower — gene comparison', plot_bgcolor='white',
+                      height=600, showlegend=False, margin=dict(t=80, l=20, r=20, b=20))
     return fig
 
 
@@ -729,42 +792,25 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
     return fig
 
 
-def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
-                                smooth_sigma=0, min_cells=1, color_floor=0.05,
-                                bin_stat='mean', color_label='expression', params=None):
-    """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
-
-    Identical score-grid binning to create_wholemount_binned_figure (bin in (NT, DV) score
-    space via _binned_mean, mask by the cell floor, share the cell-derived basis), but the
-    grid VERTICES are warped onto the sphere (wm.sphere_coords) and each populated bin is
-    drawn as two Mesh3d triangles coloured by its statistic. A sphere has no curvature
-    deficit, so -- unlike the flat flower -- there are no relief rips to drop; only
-    below-floor bins are omitted, leaving the faint reference globe showing through.
-    """
-    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
-    dv = np.asarray(dv, dtype=float)
-    nt = np.asarray(nt, dtype=float)
-    v = np.asarray(vals, dtype=float)
-    finite = np.isfinite(dv) & np.isfinite(nt) & np.isfinite(v)
-    dv, nt, v = dv[finite], nt[finite], v[finite]
-    if dv.size == 0:
-        return _message_figure("No cells with DV.Score / NT.Score to project.")
-    # Derive the pole + per-axis scale from THESE cells if no fit was injected (standalone).
-    if 'sym_factors' not in P and 'scale' not in P:
-        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
-
+def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
+                          min_cells=1, color_floor=0.05, bin_stat='mean',
+                          color_label='expression', cmax=None, colorbar_x=None, showscale=True):
+    """Build the (Mesh3d + invisible hover) traces for ONE binned-sphere panel; return
+    (traces, vmax). Shared by the single-gene binned sphere and each panel of the dual-gene
+    sphere. `dv`/`nt`/`vals` must already be finite-filtered and `P` already carry a scale
+    fit. `cmax` overrides the colour-scale max (for a shared scale across panels)."""
     is_pct = (bin_stat == 'frac_pos')
     # Per-bin statistic on the SCORE grid (x = NT, y = DV); H is [nt_bin, dv_bin], NaN below floor.
     H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
-        nt, dv, v, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        nt, dv, vals, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
         min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
     vmax = max(float(vmax), 1e-9)
+    cap = float(cmax) if cmax is not None else vmax
     nb = int(bin_size)
 
     # Warp the (nb+1)x(nb+1) grid vertices onto the sphere; flat index = i*(nb+1) + j.
     NTv, DVv = np.meshgrid(nt_edges, dv_edges, indexing='ij')   # [nt, dv]
     Xv, Yv, Zv = wm.sphere_coords(DVv.ravel(), NTv.ravel(), params=P)
-    # Bin centres (for hover), warped with the same transform.
     nt_c = (nt_edges[:-1] + nt_edges[1:]) / 2
     dv_c = (dv_edges[:-1] + dv_edges[1:]) / 2
     NTc, DVc = np.meshgrid(nt_c, dv_c, indexing='ij')
@@ -785,27 +831,128 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
             hx.append(float(Xc[i, j])); hy.append(float(Yc[i, j])); hz.append(float(Zc[i, j]))
             htext.append((f"{z * 100:.1f}% detected" if is_pct else f"{z:.2f}")
                          + f"<br>{int(H_counts[i, j])} cells")
-
     if not ti:
+        return [], vmax
+
+    cbar = dict(title=color_label, tickformat='.0%' if is_pct else None)
+    if colorbar_x is not None:
+        cbar.update(x=colorbar_x, len=0.85, thickness=12)
+    traces = [
+        go.Mesh3d(  # flatshading + ambient-only lighting so the colour IS the statistic
+            x=Xv, y=Yv, z=Zv, i=ti, j=tj, k=tk, intensity=face_val, intensitymode='cell',
+            colorscale='viridis', cmin=0.0, cmax=cap, colorbar=cbar, showscale=showscale,
+            flatshading=True, hoverinfo='skip',
+            lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)),
+        go.Scatter3d(  # invisible bin-centre markers carrying the hover read-out
+            x=hx, y=hy, z=hz, mode='markers', marker=dict(size=3, opacity=0),
+            text=htext, hovertemplate='%{text}<extra></extra>', showlegend=False),
+    ]
+    return traces, vmax
+
+
+def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
+                                smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                bin_stat='mean', color_label='expression', params=None):
+    """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
+
+    Identical score-grid binning to create_wholemount_binned_figure, but the grid VERTICES
+    are warped onto the sphere and each populated bin is drawn as two Mesh3d triangles
+    (built by _sphere_binned_traces) coloured by its statistic. A sphere has no curvature
+    deficit, so -- unlike the flat flower -- there are no relief rips to drop; only
+    below-floor bins are omitted, leaving the reference globe showing through.
+    """
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    dv = np.asarray(dv, dtype=float)
+    nt = np.asarray(nt, dtype=float)
+    v = np.asarray(vals, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt) & np.isfinite(v)
+    dv, nt, v = dv[finite], nt[finite], v[finite]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+    # Derive the pole + per-axis scale from THESE cells if no fit was injected (standalone).
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
+
+    traces, _ = _sphere_binned_traces(
+        dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label=color_label)
+    if not traces:
         return _message_figure("No populated bins to project at this resolution.")
 
     fig = go.Figure()
     fig.add_trace(_reference_globe())
     csx, csy, csz = wm.sphere_coords(dv, nt, params=P)   # cell coords -> direction labels
     fig.add_trace(_orientation_labels(csx, csy, csz))
-    # flatshading + ambient-only lighting so the colour IS the statistic (no 3D shading tint).
-    fig.add_trace(go.Mesh3d(
-        x=Xv, y=Yv, z=Zv, i=ti, j=tj, k=tk,
-        intensity=face_val, intensitymode='cell',
-        colorscale='viridis', cmin=0.0, cmax=vmax,
-        colorbar=dict(title=color_label, tickformat='.0%' if is_pct else None),
-        showscale=True, flatshading=True, hoverinfo='skip',
-        lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)))
-    # Invisible bin-centre markers carrying the hover read-out.
-    fig.add_trace(go.Scatter3d(
-        x=hx, y=hy, z=hz, mode='markers', marker=dict(size=3, opacity=0),
-        text=htext, hovertemplate='%{text}<extra></extra>', showlegend=False))
+    for t in traces:
+        fig.add_trace(t)
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D, score-space binned)'))
+    return fig
+
+
+def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bin_size=50,
+                                   percentile=0.95, smooth_sigma=0, min_cells=1,
+                                   color_floor=0.05, shared_scale=False, bin_stat='mean',
+                                   params=None):
+    """Two genes side-by-side on the sphere: two 3D scenes, each the same points/binned
+    sphere as the single-gene views (reusing _reference_globe / _orientation_labels /
+    _sphere_binned_traces). Each gene gets its OWN colour scale by default so a weak gene is
+    not flattened by a strong one; shared_scale=True puts both on one absolute scale.
+    """
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt)
+    dv, nt = dv[finite], nt[finite]
+    vals_list = [np.asarray(v, dtype=float)[finite] for v in vals_list]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
+    is_pct = (bin_stat == 'frac_pos')
+    csx, csy, csz = wm.sphere_coords(dv, nt, params=P)
+
+    # Optional shared colour-scale max across the two panels (else each panel uses its own).
+    cmax_shared = None
+    if shared_scale:
+        if binned:
+            ms = [vm for v in vals_list for _, vm in [_sphere_binned_traces(
+                dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+                min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label='')]]
+            cmax_shared = max(ms) if ms else None
+        else:
+            ms = [float(np.nanmax(v)) if v.size and np.isfinite(v).any() else 0.0 for v in vals_list]
+            cmax_shared = max(ms + [float(color_floor)])
+
+    fig = make_subplots(rows=1, cols=2, specs=[[{'type': 'scene'}, {'type': 'scene'}]],
+                        subplot_titles=[str(n) for n in names], horizontal_spacing=0.02)
+    cbx = [0.45, 1.0]   # colorbar x for the left / right panels
+    for idx, (v, name) in enumerate(zip(vals_list, names)):
+        col = idx + 1
+        fig.add_trace(_reference_globe(), row=1, col=col)
+        fig.add_trace(_orientation_labels(csx, csy, csz), row=1, col=col)
+        if binned:
+            traces, _ = _sphere_binned_traces(
+                dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+                min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
+                color_label=_dual_colorbar_title(name, shared_scale, is_pct),
+                cmax=cmax_shared, colorbar_x=cbx[idx])
+            for t in traces:
+                fig.add_trace(t, row=1, col=col)
+        else:
+            cap = cmax_shared if cmax_shared is not None else max(
+                float(np.nanmax(v)) if v.size and np.isfinite(v).any() else 0.0, float(color_floor))
+            fig.add_trace(go.Scatter3d(
+                x=csx, y=csy, z=csz, mode='markers',
+                marker=dict(size=2.5, opacity=0.85, color=v, colorscale='viridis',
+                            cmin=0.0, cmax=cap, showscale=True,
+                            colorbar=dict(title=_dual_colorbar_title(name, shared_scale, False),
+                                          x=cbx[idx], len=0.85, thickness=12)),
+                hoverinfo='skip', showlegend=False), row=1, col=col)
+
+    scene_cfg = dict(aspectmode='data', xaxis=dict(visible=False), yaxis=dict(visible=False),
+                     zaxis=dict(visible=False), camera=_SPHERE_CAMERA)
+    fig.update_layout(title='Whole-mount sphere (3D) — gene comparison', plot_bgcolor='white',
+                      height=700, margin=dict(t=80, l=0, r=0, b=0),
+                      scene=scene_cfg, scene2=scene_cfg)
     return fig
 
 
