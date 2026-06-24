@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
      Output('sphere-camera-store', 'data', allow_duplicate=True),
      Output('roi-vertices-store', 'data', allow_duplicate=True),
      Output('volcano-lfc-thresh', 'value', allow_duplicate=True),
-     Output('volcano-padj-thresh', 'value', allow_duplicate=True)],
+     Output('volcano-padj-thresh', 'value', allow_duplicate=True),
+     Output('deg-min-cells', 'value', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     prevent_initial_call='initial_duplicate'
@@ -52,7 +53,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 33
+    n_out = 34
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -98,6 +99,7 @@ def initialize_from_url(search, pathname):
         state.get('roi', no_update),         # restore ROI polygons (drawn once the map renders)
         state.get('volcano_lfc', no_update), # absent -> keep the layout default (1.0)
         state.get('volcano_padj', no_update),# absent -> keep the layout default (0.05)
+        state.get('deg_min_cells', no_update),# absent -> keep the layout default (50)
     )
 
 @callback(
@@ -150,6 +152,7 @@ def initialize_from_url(search, pathname):
      State('roi-vertices-store', 'data'),
      State('volcano-lfc-thresh', 'value'),
      State('volcano-padj-thresh', 'value'),
+     State('deg-min-cells', 'value'),
      State('url', 'href')],
     prevent_initial_call=True
 )
@@ -164,7 +167,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
               group_value_source, group_meta,
               ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode, sphere_cam,
-              roi_verts, volcano_lfc, volcano_padj, current_url):
+              roi_verts, volcano_lfc, volcano_padj, deg_min_cells, current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
 
@@ -245,6 +248,10 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
         state_dict['volcano_lfc'] = float(volcano_lfc)
     if volcano_padj is not None and float(volcano_padj) != 0.05:
         state_dict['volcano_padj'] = float(volcano_padj)
+    # ROI min-cells floor -- part of the DE run signature, so a shared ROI must carry a
+    # non-default floor or the recipient silently reruns at 50 (different volcano / guard).
+    if deg_min_cells is not None and int(deg_min_cells) != 50:
+        state_dict['deg_min_cells'] = int(deg_min_cells)
 
     # ROI polygons (the differential-expression setup). Additive optional key -- old
     # links lack it (restore to no ROI) and older viewers ignore it, so the URL stays

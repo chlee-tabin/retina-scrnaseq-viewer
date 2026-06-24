@@ -101,6 +101,35 @@ def invalidate_stale_results(verts, data_store, min_cells, custom_x, custom_y,
             _message_figure("Inputs changed — click Run to recompute differential expression."))
 
 
+# ---- Invalidate when the view becomes one ROI DE can't run on ----
+# Binning + a categorical colour renders the per-category facet grid that run_deg_cb refuses
+# (its axes are category-local). Entering that state after a valid run would leave a result the
+# current map can't support. Colour/binning are otherwise display-only (deliberately out of the
+# signature), so clear ONLY when the new state is the unsupported one -- a benign recolour keeps
+# the result. column_types mirrors _is_categorical_series (app.py), so no adata load is needed.
+@callback(
+    [Output('deg-results-store', 'data', allow_duplicate=True),
+     Output('deg-status', 'children', allow_duplicate=True),
+     Output('deg-recap-plot', 'figure', allow_duplicate=True)],
+    [Input('color-select', 'value'),
+     Input('enable-binning', 'value')],
+    [State('deg-results-store', 'data'),
+     State('data-store', 'data')],
+    prevent_initial_call=True,
+)
+def invalidate_on_unsupported_view(color_by, enable_binning, results, data_store):
+    if not results:
+        raise PreventUpdate
+    col_types = (data_store or {}).get('column_types', {})
+    categorical = (color_by and color_by != 'gene_expression'
+                   and col_types.get(color_by) == 'categorical')
+    if _on(enable_binning) and categorical:
+        return (None, '', _message_figure(
+            "This view can't run ROI DE — turn off binning or colour by a gene / continuous "
+            "score, then Run."))
+    raise PreventUpdate
+
+
 # ---- Highlight the active draw button + report vertex counts ----
 @callback(
     [Output('roi-draw-a-btn', 'outline'),
