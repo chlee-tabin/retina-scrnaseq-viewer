@@ -28,6 +28,9 @@ from utils.deg import (
     DEGError, NoReplicate, InsufficientReplicates,
 )
 from utils.deg_plots import create_volcano_figure, create_recap_figure
+# Reused so the run gate matches the main plot's own categorical decision (no circular import:
+# main_callbacks imports nothing from callbacks/).
+from callbacks.main_callbacks import _is_categorical_series, _on
 
 logger = logging.getLogger(__name__)
 
@@ -192,13 +195,21 @@ def _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, 
      State('custom-x-select', 'value'),
      State('custom-y-select', 'value'),
      State('embedding-select', 'value'),
-     State('custom-projection', 'value')],
+     State('custom-projection', 'value'),
+     State('color-select', 'value'),
+     State('enable-binning', 'value')],
     prevent_initial_call=True,
 )
 def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
-               embedding, projection):
-    if not n_clicks or not data_store:
+               embedding, projection, color_by, enable_binning):
+    if not n_clicks:
         return no_update, no_update, no_update
+    if not data_store:
+        # Re-enable Run + hide the activity bar (the clientside hide only fires on a recap or
+        # results change), and say why nothing ran -- otherwise the controls stay stuck disabled.
+        return no_update, _message_figure(""), dbc.Alert(
+            "No dataset loaded yet — wait for the data to finish loading, then Run.",
+            color="warning")
     try:
         # ROI selection is point-in-polygon on the raw DV/NT score axes, so it is only valid
         # on the custom embedding in raw mode. Reject anything else -- UMAP, and every
@@ -217,6 +228,17 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         if custom_x not in adata.obs.columns or custom_y not in adata.obs.columns:
             return None, _message_figure(""), dbc.Alert(
                 "The selected axes are not present in this dataset.", color="warning")
+
+        # A categorical colour with binning on renders a per-category facet grid, and each
+        # facet's histogram2d has its own local axes -- so a polygon's coords there are not the
+        # global DV/NT scores this DE applies to all cells. Reject it (same categorical test the
+        # main plot uses) rather than silently contrast the wrong region.
+        if (_on(enable_binning) and color_by and color_by != 'gene_expression'
+                and color_by in adata.obs.columns and _is_categorical_series(adata.obs[color_by])):
+            return None, _message_figure(""), dbc.Alert(
+                "ROI DE isn't available on a category-faceted binned map — each category panel "
+                "has its own axes. Colour by a gene or a continuous score, or turn off binning, "
+                "then draw the ROI.", color="warning")
 
         xs = pd.to_numeric(adata.obs[custom_x], errors='coerce').to_numpy()
         ys = pd.to_numeric(adata.obs[custom_y], errors='coerce').to_numpy()
