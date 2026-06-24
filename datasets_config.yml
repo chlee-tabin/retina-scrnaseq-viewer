@@ -18,6 +18,15 @@ datasets:
     last_updated: "2025-06-04"
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
     default_gene: "FGF8"
+    # HAA (high-acuity area / area centralis) landmark on the 3D sphere: placed at the
+    # median topographic position of this marker's expressing cells. Chick-specific
+    # (CYP26C1 marks the chick HAA); omit for human/mouse so no HAA label is drawn.
+    haa_marker: "CYP26C1"
+    # Exploratory (3D sphere only): the chick RPC data under-samples the most-nasal retina;
+    # the flat Fig R2.5 flower draws that as a hatched "missing/uncaptured" cap. nasal_gap
+    # renders the sphere echo of it (translucent grey band beyond the nasal rim). frac/layers
+    # = the R2.5 values. Chick-only -> omit for human/mouse so they show no band.
+    nasal_gap: {frac: 0.13, layers: 2}
     smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
     min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
     replicate_columns: ["library", "genotype"]  # pseudobulk unit for the group figure (Panel A)

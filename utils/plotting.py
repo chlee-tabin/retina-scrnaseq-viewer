@@ -521,7 +521,7 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
 def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
                                     smooth_sigma=0, min_cells=1, color_floor=0.05,
                                     bin_stat='mean', color_label='expression',
-                                    params=None, n_color_bins=24):
+                                    params=None, n_color_bins=24, nasal_gap=None):
     """Whole-mount ("flower") binned map, faithful to the reviewer figure.
 
     Unlike a histogram of the warped per-cell coordinates (which scatters isolated
@@ -552,14 +552,50 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     if 'sym_factors' not in P and 'scale' not in P:
         P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
 
-    is_pct = (bin_stat == 'frac_pos')
+    traces, _ = _wholemount_binned_traces(
+        dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
+        color_label=color_label, n_color_bins=n_color_bins)
+    if not traces:
+        return _message_figure("No populated bins to project at this resolution.")
+    fig = go.Figure()
+    for t in traces:
+        fig.add_trace(t)
+    if nasal_gap:   # hatched uncaptured-nasal tiles (Fig R2.5 ghost cap), now controllable
+        ov = _missing_nasal_overlay_flat(dv, nt, P, frac=nasal_gap.get('frac', 0),
+                                         layers=int(nasal_gap.get('layers', 2)),
+                                         dorsal_deg=nasal_gap.get('dorsal_deg', 45.0),
+                                         ventral_deg=nasal_gap.get('ventral_deg', 54.46),
+                                         bin_size=bin_size, min_cells=min_cells)
+        for t in ov:
+            fig.add_trace(t)
+    fig.update_layout(
+        title='Whole-mount projection (score-space binned)',
+        plot_bgcolor='white', height=800, showlegend=False,
+        margin=dict(t=60, l=20, r=20, b=20),
+        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False,
+                   scaleanchor='y', scaleratio=1),
+        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
+    )
+    return fig
 
-    # Per-bin statistic on the SCORE grid (x = NT, y = DV), via the shared binning math.
-    # H is indexed [nt_bin, dv_bin]; NaN where the bin is below the cell floor.
+
+def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
+                              min_cells=1, color_floor=0.05, bin_stat='mean',
+                              color_label='expression', n_color_bins=24, cmax=None,
+                              colorbar_x=None, showscale=True):
+    """Build the (filled-quad level traces + colorbar carrier + hover) traces for ONE
+    score-space binned FLOWER panel; return (traces, vmax). Shared by the single-gene flower
+    and each panel of the dual-gene flower, so both render the SAME faithful score-space quad
+    map -- not a histogram of warped coords. `dv`/`nt`/`vals` already finite-filtered, `P`
+    already carries a fit. `cmax` overrides the colour-scale max (for a shared scale)."""
+    is_pct = (bin_stat == 'frac_pos')
+    # Per-bin statistic on the SCORE grid (x = NT, y = DV); H is [nt_bin, dv_bin], NaN below floor.
     H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
-        nt, dv, v, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        nt, dv, vals, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
         min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
     vmax = max(float(vmax), 1e-9)
+    cap = float(cmax) if cmax is not None else vmax
     nb = int(bin_size)
 
     # Warp the grid VERTICES ((nb+1) x (nb+1)); keep gore + rho for rip detection.
@@ -570,10 +606,8 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     rho_v = np.asarray(diag['rho']).reshape(NTv.shape)
     rho_join = np.deg2rad({**wm.DEFAULT_PARAMS, **P}['rho_join_deg'])
 
-    # Bucket filled quads by colour level -> a handful of traces instead of thousands.
     buckets = {}
     hx, hy, htext = [], [], []
-    # Bin-centre coordinates (for hover), warped with the same transform.
     nt_c = (nt_edges[:-1] + nt_edges[1:]) / 2
     dv_c = (dv_edges[:-1] + dv_edges[1:]) / 2
     NTc, DVc = np.meshgrid(nt_c, dv_c, indexing='ij')
@@ -588,7 +622,7 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
             gs = gore_v[i:i + 2, j:j + 2]
             if gs.min() != gs.max() and rho_v[i:i + 2, j:j + 2].min() > rho_join:
                 continue   # quad straddles a rip beyond the joined centre -> real slit
-            b = int(min(n_color_bins - 1, max(0, np.floor(z / vmax * n_color_bins))))
+            b = int(min(n_color_bins - 1, max(0, np.floor(z / cap * n_color_bins))))
             xs = [Xv[i, j], Xv[i, j + 1], Xv[i + 1, j + 1], Xv[i + 1, j], Xv[i, j], None]
             ys = [Yv[i, j], Yv[i, j + 1], Yv[i + 1, j + 1], Yv[i + 1, j], Yv[i, j], None]
             buckets.setdefault(b, ([], []))
@@ -596,39 +630,549 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
             hx.append(float(Xc[i, j])); hy.append(float(Yc[i, j]))
             htext.append((f"{z * 100:.1f}% detected" if is_pct else f"{z:.2f}")
                          + f"<br>{int(H_counts[i, j])} cells")
-
-    fig = go.Figure()
     if not buckets:
-        return _message_figure("No populated bins to project at this resolution.")
+        return [], vmax
+
     levels = pcolors.sample_colorscale(
         'viridis', [(b + 0.5) / n_color_bins for b in range(n_color_bins)])
-    for b, (xs, ys) in sorted(buckets.items()):
-        fig.add_trace(go.Scatter(
-            x=xs, y=ys, mode='lines', fill='toself', fillcolor=levels[b],
-            line=dict(width=0), hoverinfo='skip', showlegend=False))
-
-    # Invisible carrier trace for the continuous colorbar.
-    fig.add_trace(go.Scatter(
+    traces = [go.Scatter(x=xs, y=ys, mode='lines', fill='toself', fillcolor=levels[b],
+                         line=dict(width=0), hoverinfo='skip', showlegend=False)
+              for b, (xs, ys) in sorted(buckets.items())]
+    cbar = dict(title=color_label, tickformat='.0%' if is_pct else None)
+    if colorbar_x is not None:
+        cbar.update(x=colorbar_x, len=0.9, thickness=12)
+    traces.append(go.Scatter(   # invisible carrier for the continuous colorbar
         x=[float(np.nanmean(Xc))], y=[float(np.nanmean(Yc))], mode='markers',
-        marker=dict(colorscale='viridis', cmin=0, cmax=vmax, color=[0], size=0.1,
-                    opacity=0, showscale=True,
-                    colorbar=dict(title=color_label,
-                                  tickformat='.0%' if is_pct else None)),
+        marker=dict(colorscale='viridis', cmin=0, cmax=cap, color=[0], size=0.1,
+                    opacity=0, showscale=showscale, colorbar=cbar),
         hoverinfo='skip', showlegend=False))
-    # Invisible bin-centre markers carrying the hover read-out.
-    fig.add_trace(go.Scatter(
+    traces.append(go.Scatter(   # invisible bin-centre markers carrying the hover read-out
         x=hx, y=hy, mode='markers', marker=dict(size=8, opacity=0),
         text=htext, hovertemplate='%{text}<extra></extra>', showlegend=False))
+    return traces, vmax
 
-    fig.update_layout(
-        title='Whole-mount projection (score-space binned)',
-        plot_bgcolor='white', height=800, showlegend=False,
-        margin=dict(t=60, l=20, r=20, b=20),
-        xaxis=dict(showgrid=False, showticklabels=False, zeroline=False,
-                   scaleanchor='y', scaleratio=1),
-        yaxis=dict(showgrid=False, showticklabels=False, zeroline=False),
-    )
+
+def create_dual_gene_wholemount_figure(dv, nt, vals_list, names, *, bin_size=50, percentile=0.95,
+                                       smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                       shared_scale=False, bin_stat='mean', params=None,
+                                       n_color_bins=24):
+    """Two genes side-by-side as faithful score-space binned FLOWERS (two xy panels), so the
+    binned comparison matches the single-gene binned flower instead of histogramming warped
+    coords (the source of the "looks like different parameters" mismatch). Independent colour
+    scales by default; shared_scale=True puts both panels on one absolute scale."""
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt)
+    dv, nt = dv[finite], nt[finite]
+    vals_list = [np.asarray(v, dtype=float)[finite] for v in vals_list]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
+    is_pct = (bin_stat == 'frac_pos')
+
+    cmax_shared = None
+    if shared_scale:
+        ms = [vm for v in vals_list for _, vm in [_wholemount_binned_traces(
+            dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+            min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label='',
+            n_color_bins=n_color_bins)]]
+        cmax_shared = max(ms) if ms else None
+
+    fig = make_subplots(rows=1, cols=2, subplot_titles=[str(n) for n in names],
+                        horizontal_spacing=0.08)
+    cbx = [0.43, 1.0]
+    for idx, (v, name) in enumerate(zip(vals_list, names)):
+        col = idx + 1
+        traces, _ = _wholemount_binned_traces(
+            dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+            min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
+            color_label=_dual_colorbar_title(name, shared_scale, is_pct),
+            n_color_bins=n_color_bins, cmax=cmax_shared, colorbar_x=cbx[idx])
+        if not traces:
+            continue
+        for t in traces:
+            fig.add_trace(t, row=1, col=col)
+    for c in (1, 2):
+        fig.update_xaxes(showgrid=False, showticklabels=False, zeroline=False, row=1, col=c)
+        fig.update_yaxes(showgrid=False, showticklabels=False, zeroline=False,
+                         scaleanchor=('x' if c == 1 else 'x2'), scaleratio=1, row=1, col=c)
+    fig.update_layout(title='Whole-mount flower — gene comparison', plot_bgcolor='white',
+                      height=600, showlegend=False, margin=dict(t=80, l=20, r=20, b=20))
     return fig
+
+
+# Shared 3D-scene styling for the two sphere views (points + binned). The camera looks
+# face-on at the polar cap with dorsal (+y) up and nasal (+x) right, matching the flower.
+_SPHERE_CAMERA = dict(eye=dict(x=0.0, y=-0.85, z=1.45), up=dict(x=0, y=1, z=0))
+
+
+def _reference_globe():
+    """Faint translucent unit sphere so the coloured cap reads as a curved surface."""
+    u = np.linspace(0, 2 * np.pi, 48)
+    v = np.linspace(0, np.pi, 24)
+    return go.Surface(
+        x=np.outer(np.cos(u), np.sin(v)),
+        y=np.outer(np.sin(u), np.sin(v)),
+        z=np.outer(np.ones_like(u), np.cos(v)),
+        opacity=0.12, showscale=False, hoverinfo='skip',
+        colorscale=[[0, '#dadada'], [1, '#dadada']],
+        lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0))
+
+
+def _sphere_layout(title):
+    """Common layout for the sphere figures: white bg, hidden axes, equal aspect, face-on cam.
+    `scene.uirevision` is a constant so a user's rotation/zoom PERSISTS across re-renders (gene
+    or colour changes) instead of snapping back to the default camera; the default camera only
+    applies on the first render (before any interaction)."""
+    return dict(
+        title=title, plot_bgcolor='white', height=800, margin=dict(t=60, l=0, r=0, b=0),
+        uirevision='wholemount-sphere',
+        scene=dict(aspectmode='data', uirevision='wholemount-sphere',
+                   xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
+                   camera=_SPHERE_CAMERA))
+
+
+def _orientation_labels(sx, sy, sz, haa_xyz=None):
+    """Cardinal anatomical-direction labels so the 3D view is readable (the axes are hidden):
+    nasal +x, dorsal +y, temporal -x, ventral -y. Each floats just beyond the data rim in its
+    direction (95th-pct colatitude there) and is lifted off the unit sphere so the cap doesn't
+    occlude it; text billboards to the camera. The HAA landmark is dataset-specific: drawn (a
+    crimson diamond + 'HAA') only when `haa_xyz` is given -- the selected HAA-mode centre of
+    chick CYP26C1+ cells (callbacks.main_callbacks._haa_center / wholemount.haa_center) -- so
+    human/mouse, which configure no marker, get NO HAA label. The HAA sits at the marker's
+    actual location, not the score-origin pole. Returns a LIST of traces."""
+    sx = np.asarray(sx, dtype=float); sy = np.asarray(sy, dtype=float); sz = np.asarray(sz, dtype=float)
+    m = np.isfinite(sx) & np.isfinite(sy) & np.isfinite(sz)
+    sx, sy, sz = sx[m], sy[m], sz[m]
+    R = 1.08  # lift labels just off the surface
+    lx, ly, lz, lt = [], [], [], []
+    if sx.size:
+        az = np.degrees(np.arctan2(sy, sx)) % 360.0
+        rho = np.arccos(np.clip(sz, -1.0, 1.0))   # colatitude
+        for ang, name in [(0, 'Nasal'), (90, 'Dorsal'), (180, 'Temporal'), (270, 'Ventral')]:
+            near = np.abs(((az - ang + 180) % 360) - 180) <= 30
+            rr = np.percentile(rho[near], 95) if near.sum() > 20 else np.nanpercentile(rho, 95)
+            rr = min(rr + np.radians(8), np.radians(105))   # just beyond the rim
+            t = np.radians(ang)
+            lx.append(R * np.sin(rr) * np.cos(t))
+            ly.append(R * np.sin(rr) * np.sin(t))
+            lz.append(R * np.cos(rr))
+            lt.append(name)
+    traces = [go.Scatter3d(
+        x=lx, y=ly, z=lz, mode='text', text=lt,
+        textfont=dict(size=13, color='#222'), hoverinfo='skip', showlegend=False)]
+    if haa_xyz is not None:
+        traces.append(go.Scatter3d(
+            x=[R * haa_xyz[0]], y=[R * haa_xyz[1]], z=[R * haa_xyz[2]],
+            mode='markers+text', text=['HAA'], textposition='top center',
+            textfont=dict(size=13, color='#c1121f'),
+            marker=dict(size=5, color='#c1121f', symbol='diamond'),
+            hoverinfo='skip', showlegend=False))
+    return traces
+
+
+def _haa_caption_text(haa_marker, haa_mode):
+    """The HAA footnote text, shared by the sphere caption and the 2D marker: names the active
+    mode and notes the definition is selectable (the marker is sparse, so the centres differ)."""
+    desc = wm.HAA_MODE_DESC.get(haa_mode, 'centre')
+    return (f"◆ HAA = {haa_marker} {desc}.  Definition selectable "
+            f"(footprint / expression / domain / peak) — {haa_marker} is sparse, so these differ.")
+
+
+def _haa_caption(fig, haa_xyz, haa_marker, haa_mode=None):
+    """Footnote naming the HAA landmark's active definition (only when a diamond is drawn), so
+    the mark isn't unexplained. Bottom-left paper corner (fine over the sphere's whitespace)."""
+    if haa_xyz is not None and haa_marker:
+        fig.add_annotation(
+            text=_haa_caption_text(haa_marker, haa_mode),
+            xref='paper', yref='paper', x=0.0, y=0.0, xanchor='left', yanchor='bottom',
+            align='left', showarrow=False, font=dict(size=10, color='#c1121f'))
+    return fig
+
+
+def _add_haa_marker_2d(fig, x, y, haa_marker, haa_mode=None):
+    """Draw the HAA landmark (crimson diamond + 'HAA' + caption) on a 2D whole-mount figure
+    (flat flower, or raw NT/DV axes) -- the 2D twin of the sphere's _orientation_labels HAA.
+    `x, y` are the landmark's coordinates already in the figure's display space. No-op if None.
+
+    The caption goes BELOW the plot in an enlarged bottom margin (not the sphere's bottom-left
+    paper corner, which over a filled 2D panel overlaps the axes / data)."""
+    if x is None or y is None or not haa_marker:
+        return fig
+    fig.add_trace(go.Scatter(
+        x=[x], y=[y], mode='markers+text', text=['HAA'], textposition='top center',
+        textfont=dict(size=13, color='#c1121f'),
+        marker=dict(size=11, color='#c1121f', symbol='diamond'),
+        hoverinfo='skip', showlegend=False, name='HAA'))
+    fig.add_annotation(
+        text=_haa_caption_text(haa_marker, haa_mode),
+        xref='paper', yref='paper', x=0.0, y=-0.13, xanchor='left', yanchor='top',
+        align='left', showarrow=False, font=dict(size=10, color='#c1121f'))
+    fig.update_layout(margin_b=96)   # room below the x-axis for the caption
+    return fig
+
+
+def _nasal_edge_bins(dv, nt, P, *, layers, dorsal_deg, ventral_deg, bin_size, min_cells):
+    """Shared selection for the uncaptured-nasal overlay (flat flower AND sphere): the nasal
+    outer-edge bins within the nasal wedge, plus each one's radial layer count.
+
+    Mirrors flower_reproject.render_grid's `ghost_polys` block on a COUNT grid (so the band is
+    anatomical / gene-independent, like the figure): each populated bin with NO populated
+    neighbour one bin further nasal (i+1, since nasal = +NT) whose CENTRE falls in the nasal
+    wedge (cx>0; dorsal <= dorsal_deg; ventral <= ventral_deg, tested in the un-stretched
+    azimuthal frame cx,cy = rho*(cos,sin)(theta)). Returns (nt_e, dv_lo, dv_hi, L) arrays --
+    the two nasal-edge corners' scores per bin (nt = nt_edges[i+1]; the two DV corners) and the
+    layer count L = layers (+1 ventro-nasally) -- or None if nothing qualifies.
+    """
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float)
+    m = np.isfinite(dv) & np.isfinite(nt)
+    dv, nt = dv[m], nt[m]
+    if dv.size == 0:
+        return None
+    nb = int(bin_size)
+    # Count grid on the score axes (x=NT, y=DV) -- SAME edges as the binned map
+    # (_binned_mean histograms (nt, dv)); a bin is "captured" at >= min_cells, so the band's
+    # inner edge meets the drawn cap's nasal rim. i indexes NT (nasal = +i), j indexes DV.
+    counts, nt_edges, dv_edges = np.histogram2d(nt, dv, bins=nb)
+    valid = counts >= max(1, int(min_cells))
+    cand = [(i, j) for i in range(nb) for j in range(nb)
+            if valid[i, j] and not (i + 1 < nb and valid[i + 1, j])]
+    if not cand:
+        return None
+    ci = np.array([c[0] for c in cand]); cj = np.array([c[1] for c in cand])
+    _, _, dc = wm.flower_transform((dv_edges[cj] + dv_edges[cj + 1]) / 2,
+                                   (nt_edges[ci] + nt_edges[ci + 1]) / 2, **P)
+    rho_c = np.asarray(dc['rho']); th_c = np.asarray(dc['theta'])
+    cx = rho_c * np.cos(th_c); cy = rho_c * np.sin(th_c)
+    td = np.tan(np.radians(float(dorsal_deg)))    # R2.5: 45deg -> cy<=cx
+    tv = np.tan(np.radians(float(ventral_deg)))   # R2.5: ~54deg -> cy>=-1.4*cx
+    keep = (cx > 0) & (cy <= td * cx) & (cy >= -tv * cx)
+    if not keep.any():
+        return None
+    ci, cj, cy = ci[keep], cj[keep], cy[keep]
+    L = int(layers) + (cy < 0).astype(int)        # one extra radial layer ventro-nasally
+    return nt_edges[ci + 1], dv_edges[cj], dv_edges[cj + 1], L
+
+
+def _missing_nasal_overlay(dv, nt, params, *, frac, layers=2, dorsal_deg=45.0,
+                           ventral_deg=54.46, bin_size=50, min_cells=1):
+    """Exploratory "(missing) uncaptured most-nasal cap" band for the SPHERE -- the 3D echo of
+    the flat Fig R2.5 hatched missing-nasal tiles (flower_reproject.render_grid `ghost_polys`).
+
+    The chick RPC data under-samples the most-nasal retina; the flat flower draws that region
+    as hatched empty tiles extruded radially outward from the nasal outer edge. In the flower's
+    azimuthal-equidistant projection display radius = colatitude, so the flat "extrude outward
+    by f = 1 + frac*k" becomes "raise colatitude rho -> rho*f" here: the band sits just beyond
+    the cap rim on the nasal side, wrapping toward / past the equator. Plotly can't hatch a 3D
+    surface, so the band is a translucent grey Mesh3d + a grey outline with one diagonal per
+    tile (sparse "///"). `dorsal_deg`/`ventral_deg` set the angular reach (shrink to a sub-arc);
+    `layers` the radial reach (0 = off). Returns a list of traces (empty if nothing qualifies).
+    The flat-flower twin is _missing_nasal_overlay_flat; both share _nasal_edge_bins.
+    """
+    if not frac or frac <= 0 or layers <= 0:
+        return []
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    sel = _nasal_edge_bins(dv, nt, P, layers=layers, dorsal_deg=dorsal_deg,
+                           ventral_deg=ventral_deg, bin_size=bin_size, min_cells=min_cells)
+    if sel is None:
+        return []
+    nt_e, dv_lo, dv_hi, L = sel
+    _, _, d1 = wm.flower_transform(dv_lo, nt_e, **P)
+    _, _, d2 = wm.flower_transform(dv_hi, nt_e, **P)
+    rho1 = np.asarray(d1['rho']); th1 = np.asarray(d1['theta'])
+    rho2 = np.asarray(d2['rho']); th2 = np.asarray(d2['theta'])
+
+    def _xyz(rho, th):
+        rho = min(float(rho), np.pi)          # don't fold back past the far pole
+        s = np.sin(rho)
+        return s * np.cos(th), s * np.sin(th), np.cos(rho)
+
+    vx, vy, vz, ti, tj, tk = [], [], [], [], [], []
+    lx, ly, lz = [], [], []                   # outline + one diagonal per tile, None-separated
+    for n in range(len(L)):
+        for k in range(int(L[n])):
+            f0, f1 = 1.0 + frac * k, 1.0 + frac * (k + 1)
+            a = _xyz(rho1[n] * f0, th1[n]); b = _xyz(rho1[n] * f1, th1[n])
+            c = _xyz(rho2[n] * f1, th2[n]); d = _xyz(rho2[n] * f0, th2[n])
+            base = len(vx)
+            for p in (a, b, c, d):
+                vx.append(p[0]); vy.append(p[1]); vz.append(p[2])
+            ti += [base, base]; tj += [base + 1, base + 2]; tk += [base + 2, base + 3]
+            lx += [a[0], b[0], c[0], d[0], a[0], None, a[0], c[0], None]
+            ly += [a[1], b[1], c[1], d[1], a[1], None, a[1], c[1], None]
+            lz += [a[2], b[2], c[2], d[2], a[2], None, a[2], c[2], None]
+    if not vx:
+        return []
+    return [
+        go.Mesh3d(x=vx, y=vy, z=vz, i=ti, j=tj, k=tk, color='#9a9a9a', opacity=0.25,
+                  flatshading=True, hoverinfo='skip', showscale=False, name='uncaptured nasal',
+                  lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)),
+        go.Scatter3d(x=lx, y=ly, z=lz, mode='lines', line=dict(color='#5f5f5f', width=2),
+                     hoverinfo='skip', showlegend=False, name='uncaptured nasal'),
+    ]
+
+
+def _missing_nasal_overlay_flat(dv, nt, params, *, frac, layers=2, dorsal_deg=45.0,
+                                ventral_deg=54.46, bin_size=50, min_cells=1):
+    """The flat-flower (2D) twin of _missing_nasal_overlay: the hatched "missing/uncaptured"
+    most-nasal tiles of Fig R2.5 (flower_reproject `ghost_polys`), now controllable in the
+    viewer's flower view. Same edge+wedge selection (_nasal_edge_bins), but each nasal-edge
+    corner's DISPLAY position (X,Y -- stretch included, so the tiles sit on the drawn cap's
+    nasal rim) is extruded outward by f = 1 + frac*k. Plotly 2D CAN hatch, so the tiles use a
+    "/" fillpattern -- closest to the published figure. Returns a list of traces (empty if
+    nothing qualifies)."""
+    if not frac or frac <= 0 or layers <= 0:
+        return []
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    sel = _nasal_edge_bins(dv, nt, P, layers=layers, dorsal_deg=dorsal_deg,
+                           ventral_deg=ventral_deg, bin_size=bin_size, min_cells=min_cells)
+    if sel is None:
+        return []
+    nt_e, dv_lo, dv_hi, L = sel
+    X1, Y1, _ = wm.flower_transform(dv_lo, nt_e, **P)
+    X2, Y2, _ = wm.flower_transform(dv_hi, nt_e, **P)
+    X1 = np.asarray(X1); Y1 = np.asarray(Y1); X2 = np.asarray(X2); Y2 = np.asarray(Y2)
+    px, py = [], []                            # None-separated quads (each fills independently)
+    for n in range(len(L)):
+        for k in range(int(L[n])):
+            f0, f1 = 1.0 + frac * k, 1.0 + frac * (k + 1)
+            px += [X1[n] * f0, X1[n] * f1, X2[n] * f1, X2[n] * f0, X1[n] * f0, None]
+            py += [Y1[n] * f0, Y1[n] * f1, Y2[n] * f1, Y2[n] * f0, Y1[n] * f0, None]
+    if not px:
+        return []
+    return [go.Scatter(
+        x=px, y=py, mode='lines', fill='toself', fillcolor='rgba(150,150,150,0.12)',
+        fillpattern=dict(shape='/', fgcolor='#6f6f6f', bgcolor='rgba(0,0,0,0)', size=6, solidity=0.3),
+        line=dict(color='#6f6f6f', width=1), hoverinfo='skip', showlegend=False,
+        name='uncaptured nasal')]
+
+
+def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
+                         treat_as_categorical=False, color_map=None, category_order=None,
+                         haa_xyz=None, haa_marker=None, haa_mode=None,
+                         dv=None, nt=None, params=None, nasal_gap=None):
+    """3D spherical view of the whole-mount map: each cell a point on the unit sphere
+    (utils.wholemount.sphere_coords), the native near-spherical geometry the flat flower
+    projects. A faint reference sphere gives the cap its curvature; captured cells form a
+    polar cap (rho <= ~64-82 deg), so the uncaptured periphery / nasal gap read as empty.
+
+    Colour mirrors create_scatter_plot (categorical -> fixed map + order via the shared
+    helpers; else the viridis continuous scale), so a gene / score / annotation colours
+    identically to the 2D views. The binned counterpart is create_sphere_binned_figure;
+    lasso-selection is not (yet) wired for 3D.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+    color = np.asarray(color_series) if color_series is not None else np.zeros(len(x))
+    # Drop cells with no finite sphere coord (no DV/NT score): plotly would skip them, but
+    # dropping keeps the colour array aligned (mirrors the binning helpers' finite mask).
+    finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    x, y, z, color = x[finite], y[finite], z[finite], color[finite]
+    if x.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+
+    label = gene if (color_by == 'gene_expression' and gene) else (color_by or 'value')
+    df = pd.DataFrame({'x': x, 'y': y, 'z': z, 'color': color})
+
+    px_kwargs = dict(labels={'color': label})
+    if treat_as_categorical:
+        df['color'] = df['color'].astype(str)
+        order = _resolve_order(df['color'], category_order=category_order)
+        px_kwargs.update(_categorical_px_kwargs('color', color_map=color_map, order=order))
+    else:
+        px_kwargs['color_continuous_scale'] = 'viridis'
+
+    fig = px.scatter_3d(df, x='x', y='y', z='z', color='color', **px_kwargs)
+    fig.update_traces(marker=dict(size=2.5, opacity=0.85), selector=dict(type='scatter3d'))
+    fig.add_trace(_reference_globe())
+    fig.add_traces(_orientation_labels(x, y, z, haa_xyz=haa_xyz))
+    if nasal_gap and dv is not None and nt is not None:   # exploratory uncaptured-nasal band
+        ov = _missing_nasal_overlay(dv, nt, params, frac=nasal_gap.get('frac', 0),
+                                    layers=int(nasal_gap.get('layers', 2)),
+                                    dorsal_deg=nasal_gap.get('dorsal_deg', 45.0),
+                                    ventral_deg=nasal_gap.get('ventral_deg', 54.46))
+        if ov:
+            fig.add_traces(ov)
+    fig.update_layout(**_sphere_layout('Whole-mount sphere (3D)'))
+    return _haa_caption(fig, haa_xyz, haa_marker, haa_mode)
+
+
+def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
+                          min_cells=1, color_floor=0.05, bin_stat='mean',
+                          color_label='expression', cmax=None, colorbar_x=None, showscale=True):
+    """Build the (Mesh3d + invisible hover) traces for ONE binned-sphere panel; return
+    (traces, vmax). Shared by the single-gene binned sphere and each panel of the dual-gene
+    sphere. `dv`/`nt`/`vals` must already be finite-filtered and `P` already carry a scale
+    fit. `cmax` overrides the colour-scale max (for a shared scale across panels)."""
+    is_pct = (bin_stat == 'frac_pos')
+    # Per-bin statistic on the SCORE grid (x = NT, y = DV); H is [nt_bin, dv_bin], NaN below floor.
+    H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
+        nt, dv, vals, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
+    vmax = max(float(vmax), 1e-9)
+    cap = float(cmax) if cmax is not None else vmax
+    nb = int(bin_size)
+
+    # Warp the (nb+1)x(nb+1) grid vertices onto the sphere; flat index = i*(nb+1) + j.
+    NTv, DVv = np.meshgrid(nt_edges, dv_edges, indexing='ij')   # [nt, dv]
+    Xv, Yv, Zv = wm.sphere_coords(DVv.ravel(), NTv.ravel(), params=P)
+    nt_c = (nt_edges[:-1] + nt_edges[1:]) / 2
+    dv_c = (dv_edges[:-1] + dv_edges[1:]) / 2
+    NTc, DVc = np.meshgrid(nt_c, dv_c, indexing='ij')
+    Xc, Yc, Zc = (a.reshape(H.shape) for a in wm.sphere_coords(DVc.ravel(), NTc.ravel(), params=P))
+
+    # Two triangles per populated bin; per-face intensity = the bin statistic (crisp bins).
+    ti, tj, tk, face_val = [], [], [], []
+    hx, hy, hz, htext = [], [], [], []
+    for i in range(nb):
+        for j in range(nb):
+            z = H[i, j]
+            if not np.isfinite(z):
+                continue
+            a = i * (nb + 1) + j; b = (i + 1) * (nb + 1) + j
+            c = (i + 1) * (nb + 1) + (j + 1); d = i * (nb + 1) + (j + 1)
+            ti += [a, a]; tj += [b, c]; tk += [c, d]   # quad (a,b,c,d) -> tris (a,b,c)+(a,c,d)
+            face_val += [z, z]
+            hx.append(float(Xc[i, j])); hy.append(float(Yc[i, j])); hz.append(float(Zc[i, j]))
+            htext.append((f"{z * 100:.1f}% detected" if is_pct else f"{z:.2f}")
+                         + f"<br>{int(H_counts[i, j])} cells")
+    if not ti:
+        return [], vmax
+
+    cbar = dict(title=color_label, tickformat='.0%' if is_pct else None)
+    if colorbar_x is not None:
+        cbar.update(x=colorbar_x, len=0.85, thickness=12)
+    traces = [
+        go.Mesh3d(  # flatshading + ambient-only lighting so the colour IS the statistic
+            x=Xv, y=Yv, z=Zv, i=ti, j=tj, k=tk, intensity=face_val, intensitymode='cell',
+            colorscale='viridis', cmin=0.0, cmax=cap, colorbar=cbar, showscale=showscale,
+            flatshading=True, hoverinfo='skip',
+            lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)),
+        go.Scatter3d(  # invisible bin-centre markers carrying the hover read-out
+            x=hx, y=hy, z=hz, mode='markers', marker=dict(size=3, opacity=0),
+            text=htext, hovertemplate='%{text}<extra></extra>', showlegend=False),
+    ]
+    return traces, vmax
+
+
+def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
+                                smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                bin_stat='mean', color_label='expression', params=None,
+                                haa_xyz=None, haa_marker=None, haa_mode=None, nasal_gap=None):
+    """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
+
+    Identical score-grid binning to create_wholemount_binned_figure, but the grid VERTICES
+    are warped onto the sphere and each populated bin is drawn as two Mesh3d triangles
+    (built by _sphere_binned_traces) coloured by its statistic. A sphere has no curvature
+    deficit, so -- unlike the flat flower -- there are no relief rips to drop; only
+    below-floor bins are omitted, leaving the reference globe showing through.
+    """
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    dv = np.asarray(dv, dtype=float)
+    nt = np.asarray(nt, dtype=float)
+    v = np.asarray(vals, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt) & np.isfinite(v)
+    dv, nt, v = dv[finite], nt[finite], v[finite]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+    # Derive the pole + per-axis scale from THESE cells if no fit was injected (standalone).
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
+
+    traces, _ = _sphere_binned_traces(
+        dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+        min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label=color_label)
+    if not traces:
+        return _message_figure("No populated bins to project at this resolution.")
+
+    fig = go.Figure()
+    fig.add_trace(_reference_globe())
+    csx, csy, csz = wm.sphere_coords(dv, nt, params=P)   # cell coords -> direction labels
+    fig.add_traces(_orientation_labels(csx, csy, csz, haa_xyz=haa_xyz))
+    if nasal_gap:   # exploratory uncaptured-nasal band (same grid as the mesh above)
+        ov = _missing_nasal_overlay(dv, nt, P, frac=nasal_gap.get('frac', 0),
+                                    layers=int(nasal_gap.get('layers', 2)),
+                                    dorsal_deg=nasal_gap.get('dorsal_deg', 45.0),
+                                    ventral_deg=nasal_gap.get('ventral_deg', 54.46),
+                                    bin_size=bin_size, min_cells=min_cells)
+        if ov:
+            fig.add_traces(ov)
+    for t in traces:
+        fig.add_trace(t)
+    fig.update_layout(**_sphere_layout('Whole-mount sphere (3D, score-space binned)'))
+    return _haa_caption(fig, haa_xyz, haa_marker, haa_mode)
+
+
+def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bin_size=50,
+                                   percentile=0.95, smooth_sigma=0, min_cells=1,
+                                   color_floor=0.05, shared_scale=False, bin_stat='mean',
+                                   params=None, haa_xyz=None, haa_marker=None, haa_mode=None):
+    """Two genes side-by-side on the sphere: two 3D scenes, each the same points/binned
+    sphere as the single-gene views (reusing _reference_globe / _orientation_labels /
+    _sphere_binned_traces). Each gene gets its OWN colour scale by default so a weak gene is
+    not flattened by a strong one; shared_scale=True puts both on one absolute scale.
+    """
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float)
+    finite = np.isfinite(dv) & np.isfinite(nt)
+    dv, nt = dv[finite], nt[finite]
+    vals_list = [np.asarray(v, dtype=float)[finite] for v in vals_list]
+    if dv.size == 0:
+        return _message_figure("No cells with DV.Score / NT.Score to project.")
+    if 'sym_factors' not in P and 'scale' not in P:
+        P = {**P, **wm.compute_scale_fit(dv, nt, **P)}
+    is_pct = (bin_stat == 'frac_pos')
+    csx, csy, csz = wm.sphere_coords(dv, nt, params=P)
+
+    # Optional shared colour-scale max across the two panels (else each panel uses its own).
+    cmax_shared = None
+    if shared_scale:
+        if binned:
+            ms = [vm for v in vals_list for _, vm in [_sphere_binned_traces(
+                dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+                min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label='')]]
+            cmax_shared = max(ms) if ms else None
+        else:
+            ms = [float(np.nanmax(v)) if v.size and np.isfinite(v).any() else 0.0 for v in vals_list]
+            cmax_shared = max(ms + [float(color_floor)])
+
+    fig = make_subplots(rows=1, cols=2, specs=[[{'type': 'scene'}, {'type': 'scene'}]],
+                        subplot_titles=[str(n) for n in names], horizontal_spacing=0.02)
+    cbx = [0.45, 1.0]   # colorbar x for the left / right panels
+    for idx, (v, name) in enumerate(zip(vals_list, names)):
+        col = idx + 1
+        fig.add_trace(_reference_globe(), row=1, col=col)
+        for t in _orientation_labels(csx, csy, csz, haa_xyz=haa_xyz):
+            fig.add_trace(t, row=1, col=col)
+        if binned:
+            traces, _ = _sphere_binned_traces(
+                dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
+                min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
+                color_label=_dual_colorbar_title(name, shared_scale, is_pct),
+                cmax=cmax_shared, colorbar_x=cbx[idx])
+            for t in traces:
+                fig.add_trace(t, row=1, col=col)
+        else:
+            cap = cmax_shared if cmax_shared is not None else max(
+                float(np.nanmax(v)) if v.size and np.isfinite(v).any() else 0.0, float(color_floor))
+            fig.add_trace(go.Scatter3d(
+                x=csx, y=csy, z=csz, mode='markers',
+                marker=dict(size=2.5, opacity=0.85, color=v, colorscale='viridis',
+                            cmin=0.0, cmax=cap, showscale=True,
+                            colorbar=dict(title=_dual_colorbar_title(name, shared_scale, False),
+                                          x=cbx[idx], len=0.85, thickness=12)),
+                hoverinfo='skip', showlegend=False), row=1, col=col)
+
+    # uirevision (constant) keeps each panel's rotation/zoom across gene/colour re-renders.
+    scene_cfg = dict(aspectmode='data', uirevision='wholemount-sphere',
+                     xaxis=dict(visible=False), yaxis=dict(visible=False),
+                     zaxis=dict(visible=False), camera=_SPHERE_CAMERA)
+    fig.update_layout(title='Whole-mount sphere (3D) — gene comparison', plot_bgcolor='white',
+                      height=700, margin=dict(t=80, l=0, r=0, b=0), uirevision='wholemount-sphere',
+                      scene=scene_cfg, scene2=dict(scene_cfg))
+    return _haa_caption(fig, haa_xyz, haa_marker, haa_mode)
 
 
 def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin',

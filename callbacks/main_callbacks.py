@@ -1,4 +1,4 @@
-from dash import Input, Output, State, callback
+from dash import Input, Output, State, callback, clientside_callback
 from utils.data_loading import load_adata, load_dataset_config, gene_search_options
 from utils.plotting import (
     create_scatter_plot,
@@ -8,6 +8,11 @@ from utils.plotting import (
     create_dotplot,
     create_dual_gene_figure,
     create_wholemount_binned_figure,
+    create_dual_gene_wholemount_figure,
+    create_sphere_figure,
+    create_sphere_binned_figure,
+    create_dual_gene_sphere_figure,
+    _add_haa_marker_2d,
     _message_figure,
 )
 import pandas as pd
@@ -28,6 +33,53 @@ def _gene_vector(adata, gene):
     if scipy.sparse.issparse(sub):
         return sub.toarray().flatten()
     return np.asarray(sub).flatten()
+
+
+def _haa_center(adata, dv, nt, marker, mode, *, bin_size=50, min_cells=5, smooth_sigma=0.0):
+    """(dv, nt) HAA centre for the dataset's marker (chick: CYP26C1) by the chosen `mode`
+    (wholemount.haa_center: footprint / expression / domain / peak). The marker is sparse and
+    ring-ish, so 'the centre' depends on the definition -- the HAA-mode control exposes them.
+    Uses the marker's OWN expression (independent of whatever gene is being coloured). Returns
+    None when no marker / marker absent / mode None|'off' / too few cells express it -- so
+    human/mouse (no marker) and 'Off' draw no landmark."""
+    if not marker or mode in (None, 'off') or marker not in adata.var_names:
+        return None
+    expr = np.asarray(_gene_vector(adata, marker), dtype=float)
+    if int(np.count_nonzero(expr > 0)) < 5:
+        return None
+    return wholemount.haa_center(dv, nt, expr, mode, bin_size=bin_size,
+                                 min_cells=min_cells, smooth_sigma=smooth_sigma)
+
+
+# Persist the user's 3D-sphere rotation across re-renders. dcc.Graph's uirevision does NOT
+# reliably hold the 3D camera (an explicit scene.camera in each new figure overrides it), so
+# instead a clientside callback captures the camera from the plot's relayoutData into a Store,
+# and update_plot re-applies it (via _apply_sphere_camera) on every sphere render.
+clientside_callback(
+    """
+    function(relayoutData, stored) {
+        if (!relayoutData) { return window.dash_clientside.no_update; }
+        var cam = relayoutData['scene.camera'] || relayoutData['scene2.camera'];
+        return cam ? cam : window.dash_clientside.no_update;
+    }
+    """,
+    Output('sphere-camera-store', 'data'),
+    Input('main-plot', 'relayoutData'),
+    State('sphere-camera-store', 'data'),
+    prevent_initial_call=True,
+)
+
+
+def _apply_sphere_camera(fig, cam):
+    """Override the sphere scene camera(s) with the user's stored camera so a rotation persists
+    across gene/colour changes. No-op when `cam` is falsy (first render keeps the default
+    face-on camera). Sets scene2 too only when the figure actually has a second scene (dual)."""
+    if not cam:
+        return fig
+    fig.update_layout(scene_camera=cam)
+    if any(getattr(t, 'scene', None) == 'scene2' for t in fig.data):
+        fig.update_layout(scene2_camera=cam)
+    return fig
 
 
 def _on(value):
@@ -159,6 +211,21 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
     return P
 
 
+def _nasal_gap_params(cfg, layers, frac, dorsal, ventral):
+    """Effective uncaptured-nasal-band params for the sphere: None unless the dataset
+    configures `nasal_gap` (chick only -> human/mouse never show a band), else the live
+    control values (falling back to the config / R2.5 defaults). layers=0 -> the figure
+    draws nothing (the band's off switch via the Reach slider)."""
+    if not cfg:
+        return None
+    return {
+        'layers': int(layers if layers is not None else cfg.get('layers', 2)),
+        'frac': float(frac if frac is not None else cfg.get('frac', 0.13)),
+        'dorsal_deg': float(dorsal if dorsal is not None else 45.0),
+        'ventral_deg': float(ventral if ventral is not None else 55.0),
+    }
+
+
 @callback(
     Output('main-plot', 'figure', allow_duplicate=True),
     [Input('data-store', 'data'),
@@ -201,7 +268,16 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
      Input('wm-pow', 'value'),
      Input('wm-gap-mode', 'value'),
      Input('wm-gap-frac', 'value'),
-     Input('wm-pole', 'value')],
+     Input('wm-pole', 'value'),
+     # Exploratory uncaptured-nasal-cap controls (sphere only): radial reach (layers / depth)
+     # and the angular arc (dorsal / ventral reach) of the band beyond the nasal rim.
+     Input('nasal-gap-layers', 'value'),
+     Input('nasal-gap-frac', 'value'),
+     Input('nasal-gap-dorsal', 'value'),
+     Input('nasal-gap-ventral', 'value'),
+     # HAA-pointer mode (off / footprint / expression / domain / peak), all projections.
+     Input('haa-mode', 'value')],
+    State('sphere-camera-store', 'data'),
     prevent_initial_call=True
 )
 @handle_callback_error
@@ -213,7 +289,9 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 group_positive_only, group_replicate, compare_shared_scale,
                 custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
                 group_value_source, group_meta,
-                wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole):
+                wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
+                ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode,
+                sphere_cam):
     logger.debug("update_plot called with parameters:")
 
     # Initialize treat_as_categorical as False by default
@@ -331,15 +409,22 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         # `embedding` stays 'custom_embedding' so the binning logic below is unchanged.
         embedding_label = embedding
         proj_params = None   # whole-mount transform params (None unless the flower view)
+        sphere_xyz = None    # (x, y, z) on the unit sphere when the 3D projection is active
+        haa_xyz = None       # HAA landmark position on the sphere (dataset-specific marker)
+        nasal_gap_eff = None # exploratory uncaptured-nasal band params (sphere + chick only)
+        # The HAA landmark must be computed on the SAME binned field the user sees, or the
+        # diamond lands on a different grid/smoothing than the displayed map: track the active
+        # bin count (bin_number) and the effective smoothing (off when the toggle is off).
+        haa_smooth = float(data_store.get('smooth_sigma', 0) or 0) if _on(enable_smoothing) else 0.0
         if embedding == 'custom_embedding':
-            if custom_projection == 'flower':
-                # Whole-mount ("flower") reprojection of the DV/NT topographic scores
-                # (reviewer-response transform). Needs both score columns; datasets
-                # without them (e.g. the full-retina object) get a clear message.
+            if custom_projection in ('flower', 'sphere'):
+                # Whole-mount reprojection of the DV/NT topographic scores: the flat "flower"
+                # or its native 3D sphere. Both need the score columns; datasets without them
+                # (e.g. the full-retina object) get a clear message.
                 if not wholemount.has_scores(adata.obs.columns):
                     return _message_figure(
-                        "Whole-mount projection needs DV.Score and NT.Score, which this "
-                        "dataset doesn't have. It's available for the RPC datasets "
+                        "Whole-mount / sphere projection needs DV.Score and NT.Score, which "
+                        "this dataset doesn't have. It's available for the RPC datasets "
                         "(chick / human / mouse retinal progenitor cells)."
                     )
                 # Advanced-projection controls merged over the reviewer preset (defaults = R2.5).
@@ -350,15 +435,33 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     pole=('median' if wm_pole == 'median' else 'origin'),
                 )
                 # Fit the pole + per-axis scale ONCE from the cells and reuse it for every
-                # warp (scatter cells AND the binned grid), so the two views share one basis
+                # warp (scatter cells AND the binned grid), so the views share one basis
                 # and the layout stays stable under cell subsetting.
                 dv_cells = adata.obs[wholemount.DV_COL].to_numpy()
                 nt_cells = adata.obs[wholemount.NT_COL].to_numpy()
                 proj_params = {**proj_params,
                                **wholemount.compute_scale_fit(dv_cells, nt_cells, **proj_params)}
-                # Per-cell warp (used by the scatter + dual-gene views; the binned view
-                # re-bins in score space below for a stray-free, faithful map).
-                x, y = wholemount.wholemount_coords(dv_cells, nt_cells, params=proj_params)
+                # Uncaptured-nasal band params (flower AND sphere; chick-only via the config).
+                nasal_gap_eff = _nasal_gap_params(data_store.get('nasal_gap'),
+                                                  ng_layers, ng_frac, ng_dorsal, ng_ventral)
+                if custom_projection == 'sphere':
+                    # Native 3D geometry: reuse the flower's basis but place cells on the
+                    # unit sphere. Built below (a 3D figure) once the colour series resolves;
+                    # x/y are placeholders for the shared DataFrame / compare guards.
+                    sphere_xyz = wholemount.sphere_coords(dv_cells, nt_cells, params=proj_params)
+                    x, y = sphere_xyz[0], sphere_xyz[1]
+                    hc = _haa_center(adata, dv_cells, nt_cells, data_store.get('haa_marker'),
+                                     haa_mode, bin_size=bin_number,
+                                     min_cells=data_store.get('min_cells_per_bin', 5),
+                                     smooth_sigma=haa_smooth)
+                    if hc is not None:
+                        hx, hy, hz = wholemount.sphere_coords(np.array([hc[0]]), np.array([hc[1]]),
+                                                              params=proj_params)
+                        haa_xyz = (float(hx[0]), float(hy[0]), float(hz[0]))
+                else:
+                    # Per-cell warp (used by the scatter + dual-gene views; the binned view
+                    # re-bins in score space below for a stray-free, faithful map).
+                    x, y = wholemount.wholemount_coords(dv_cells, nt_cells, params=proj_params)
                 x_label = y_label = ''
                 embedding_label = 'wholemount'
             else:
@@ -395,19 +498,39 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 )
             smooth_on = _on(enable_smoothing)
             smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+            v1, v2 = _gene_vector(adata, gene), _gene_vector(adata, gene2)
+            mc = data_store.get('min_cells_per_bin', 1)
+            cf = data_store.get('color_floor', 0.05)
+            shared = _on(compare_shared_scale)
+            if sphere_xyz is not None:
+                # Two genes on side-by-side 3D spheres (points or binned mesh per panel).
+                return _apply_sphere_camera(create_dual_gene_sphere_figure(
+                    dv_cells, nt_cells, [v1, v2], [gene, gene2],
+                    binned=binning_on, bin_size=bin_number, percentile=percentile,
+                    smooth_sigma=smooth_sigma, min_cells=mc, color_floor=cf,
+                    shared_scale=shared, bin_stat=(bin_stat or 'mean'), params=proj_params,
+                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
+                ), sphere_cam)
+            if custom_projection == 'flower' and binning_on:
+                # Faithful score-space binned flower per panel (matches the single-gene
+                # binned flower), instead of histogramming the warped per-cell coordinates.
+                return create_dual_gene_wholemount_figure(
+                    dv_cells, nt_cells, [v1, v2], [gene, gene2],
+                    bin_size=bin_number, percentile=percentile, smooth_sigma=smooth_sigma,
+                    min_cells=mc, color_floor=cf, shared_scale=shared,
+                    bin_stat=(bin_stat or 'mean'), params=proj_params,
+                )
             return create_dual_gene_figure(
-                np.asarray(x), np.asarray(y),
-                [_gene_vector(adata, gene), _gene_vector(adata, gene2)],
-                [gene, gene2],
+                np.asarray(x), np.asarray(y), [v1, v2], [gene, gene2],
                 embedding_label,
                 binned=binning_on,
                 bin_size=bin_number,
                 percentile=percentile,
                 smooth_sigma=smooth_sigma,
-                min_cells=data_store.get('min_cells_per_bin', 1),
-                color_floor=data_store.get('color_floor', 0.05),
+                min_cells=mc,
+                color_floor=cf,
                 bin_stat=(bin_stat or 'mean'),
-                shared_scale=_on(compare_shared_scale),
+                shared_scale=shared,
             )
 
         # Handle gene expression
@@ -435,6 +558,37 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 logger.debug(f"Color series dtype: {color_series.dtype}")
                 treat_as_categorical = _is_categorical_series(color_series)
             logger.debug(f"treat_as_categorical: {treat_as_categorical}")
+
+        # ---- 3D spherical whole-mount: the topographic map on its native geometry ----
+        # Renders a complete 3D figure (bypasses the 2D binning/scatter dispatch below).
+        # Binned (continuous) -> a Mesh3d surface painted from the score-space binned map,
+        # mirroring the flower's binned dispatch; otherwise per-cell points. Colour resolution
+        # above is shared; categorical annotation keeps its configured map.
+        if sphere_xyz is not None:
+            if binning_on and not treat_as_categorical and color_series is not None:
+                smooth_on = _on(enable_smoothing)
+                smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+                base = gene if color_by == 'gene_expression' else str(color_by)
+                cl = f"{base} (% detected)" if bin_stat == 'frac_pos' else base
+                return _apply_sphere_camera(create_sphere_binned_figure(
+                    dv_cells, nt_cells, np.asarray(color_series, dtype=float),
+                    bin_size=bin_number, percentile=percentile, smooth_sigma=smooth_sigma,
+                    min_cells=data_store.get('min_cells_per_bin', 1),
+                    color_floor=data_store.get('color_floor', 0.05),
+                    bin_stat=(bin_stat or 'mean'), color_label=cl, params=proj_params,
+                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
+                    nasal_gap=nasal_gap_eff,
+                ), sphere_cam)
+            s_cmap, s_corder = _annotation_style(data_store, color_by)
+            return _apply_sphere_camera(create_sphere_figure(
+                sphere_xyz[0], sphere_xyz[1], sphere_xyz[2],
+                color_series, color_by, gene=gene,
+                treat_as_categorical=treat_as_categorical,
+                color_map=s_cmap, category_order=s_corder,
+                haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
+                dv=dv_cells, nt=nt_cells, params=proj_params,
+                nasal_gap=nasal_gap_eff,
+            ), sphere_cam)
 
         # Create DataFrame for plotting
         df = pd.DataFrame({
@@ -466,6 +620,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     bin_stat=(bin_stat or 'mean'),
                     color_label=cl,
                     params=proj_params,
+                    nasal_gap=nasal_gap_eff,
                 )
             else:
                 fig = create_binned_plot(
@@ -486,6 +641,26 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 color_map=s_cmap, category_order=s_corder,
                 plot_order=(viz_mode or 'random'),
             )
+
+        # HAA landmark on the 2D whole-mount views: the flat flower (warped into its display
+        # space) or raw axes when they ARE the NT/DV score columns. Same mode/centre as the
+        # sphere, projected into this view; the sphere drew its own above and returned earlier.
+        haa_marker = data_store.get('haa_marker')
+        if (embedding == 'custom_embedding' and custom_projection != 'sphere'
+                and haa_marker and (haa_mode or 'off') != 'off'
+                and wholemount.has_scores(adata.obs.columns)):
+            hc = _haa_center(adata, adata.obs[wholemount.DV_COL].to_numpy(),
+                             adata.obs[wholemount.NT_COL].to_numpy(), haa_marker, haa_mode,
+                             bin_size=bin_number, min_cells=data_store.get('min_cells_per_bin', 5),
+                             smooth_sigma=haa_smooth)
+            if hc is not None:
+                hdv, hnt = hc
+                if custom_projection == 'flower':
+                    hx, hy = wholemount.wholemount_coords(np.array([hdv]), np.array([hnt]),
+                                                          params=proj_params)
+                    fig = _add_haa_marker_2d(fig, float(hx[0]), float(hy[0]), haa_marker, haa_mode)
+                elif custom_x == wholemount.NT_COL and custom_y == wholemount.DV_COL:
+                    fig = _add_haa_marker_2d(fig, float(hnt), float(hdv), haa_marker, haa_mode)
 
         return fig
 
@@ -542,12 +717,17 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
     return options, options, default_x, default_y, container_style
 
 @callback(
-    Output('viz-mode', 'style'),
+    Output('plot-order-controls', 'style'),
     [Input('embedding-select', 'value'),
-     Input('enable-binning', 'value')]
+     Input('enable-binning', 'value'),
+     Input('custom-projection', 'value')]
 )
-def toggle_plot_order(embedding, enable_binning):
-    if embedding == 'custom_embedding' and _on(enable_binning):
+def toggle_plot_order(embedding, enable_binning, custom_projection):
+    # Plot Order is a per-cell SCATTER control (which points draw last/on top). Hide the whole
+    # block (label + radio) whenever the view is NOT a 2D per-cell scatter: any binned
+    # custom-embedding view, or the 3D sphere (points or binned -- depth is z-buffered there,
+    # not data-order). It stays visible for UMAP/PCA scatters and the non-binned flower/raw.
+    if embedding == 'custom_embedding' and (_on(enable_binning) or custom_projection == 'sphere'):
         return {'display': 'none'}
     return {'display': 'block'}
 
@@ -566,9 +746,9 @@ def toggle_binning_controls(enable_binning):
     Input('custom-projection', 'value')
 )
 def toggle_raw_axes(custom_projection):
-    # The whole-mount projection sources its own coordinates from DV.Score / NT.Score,
-    # so the manual X/Y axis pickers are irrelevant there -- hide them.
-    if custom_projection == 'flower':
+    # The whole-mount projections (flat flower and 3D sphere) source their coordinates from
+    # DV.Score / NT.Score, so the manual X/Y axis pickers are irrelevant there -- hide them.
+    if custom_projection in ('flower', 'sphere'):
         return {'display': 'none'}
     return {'display': 'block'}
 
@@ -578,8 +758,80 @@ def toggle_raw_axes(custom_projection):
     Input('custom-projection', 'value')
 )
 def toggle_wholemount_advanced(custom_projection):
-    # The Advanced-projection sliders only apply to the whole-mount ("flower") view.
-    if custom_projection == 'flower':
+    # The Advanced-projection panel applies to both whole-mount views. On the sphere the
+    # extent / de-warp / pole / symmetric knobs reshape the cap; the relief sub-group is
+    # hidden separately (toggle_wholemount_relief) since it is flat-layout-only.
+    if custom_projection in ('flower', 'sphere'):
+        return {'display': 'block'}
+    return {'display': 'none'}
+
+
+@callback(
+    [Output('wm-rho-nt', 'value', allow_duplicate=True),
+     Output('wm-rho-dv', 'value', allow_duplicate=True),
+     Output('wm-gap', 'value', allow_duplicate=True),
+     Output('wm-stretch', 'value', allow_duplicate=True),
+     Output('wm-cuts', 'value', allow_duplicate=True),
+     Output('wm-symmetric', 'value', allow_duplicate=True),
+     Output('wm-pole', 'value', allow_duplicate=True),
+     Output('wm-dewarp', 'value', allow_duplicate=True),
+     Output('wm-pow', 'value', allow_duplicate=True),
+     Output('wm-gap-mode', 'value', allow_duplicate=True),
+     Output('wm-gap-frac', 'value', allow_duplicate=True),
+     Output('nasal-gap-layers', 'value', allow_duplicate=True),
+     Output('nasal-gap-frac', 'value', allow_duplicate=True),
+     Output('nasal-gap-dorsal', 'value', allow_duplicate=True),
+     Output('nasal-gap-ventral', 'value', allow_duplicate=True)],
+    Input('wm-reset', 'n_clicks'),
+    prevent_initial_call=True,
+)
+def reset_wholemount_params(n_clicks):
+    # Restore every Advanced-projection control to its Fig R2.5 default (the values baked into
+    # control_panel.py / wholemount.LOCKED_PARAMS), so the complicated flower/sphere knobs can
+    # be returned to the published preset in one click. Keep these in sync with control_panel.
+    # Trailing four: the uncaptured-nasal band (layers / depth / dorsal° / ventral°).
+    return 82, 64, 1.0, 1.0, 4, ['enabled'], 'origin', 'arcsin', 1.6, 'deficit', 0.5, 2, 0.13, 45, 55
+
+
+@callback(
+    Output('wholemount-relief-controls', 'style'),
+    Input('custom-projection', 'value')
+)
+def toggle_wholemount_relief(custom_projection):
+    # The flat-layout relief (cuts / wedge gap / relief mode / rip width / petal stretch)
+    # only shapes the 2D flower -- it relieves the curvature deficit when flattening. The
+    # sphere uses the un-ripped (rho, theta) directly, so these knobs do nothing there: hide
+    # the whole group under the sphere projection (it stays visible for the flower).
+    if custom_projection == 'sphere':
+        return {'display': 'none'}
+    return {'display': 'block'}
+
+
+@callback(
+    Output('nasal-gap-controls', 'style'),
+    [Input('custom-projection', 'value'),
+     Input('data-store', 'data')]
+)
+def toggle_nasal_gap_controls(custom_projection, data_store):
+    # The uncaptured-nasal band applies to BOTH whole-mount views -- the flat flower (the Fig
+    # R2.5 hatched cap, its origin) and the sphere (the 3D echo) -- and only for datasets that
+    # configure `nasal_gap` (chick under-samples the most-nasal retina). Show its controls only
+    # then; raw axes / human / mouse never see them. Mirrors the band's own gating.
+    if custom_projection in ('flower', 'sphere') and (data_store or {}).get('nasal_gap'):
+        return {'display': 'block'}
+    return {'display': 'none'}
+
+
+@callback(
+    Output('haa-mode-controls', 'style'),
+    Input('data-store', 'data')
+)
+def toggle_haa_controls(data_store):
+    # The HAA pointer applies to every whole-mount projection (raw NT/DV axes, flower, sphere),
+    # but only for datasets that configure an haa_marker (chick: CYP26C1). Show its control then;
+    # human/mouse never see it. The custom-embedding-container already hides it off the custom
+    # embedding, so this gates on the marker alone.
+    if (data_store or {}).get('haa_marker'):
         return {'display': 'block'}
     return {'display': 'none'}
 
