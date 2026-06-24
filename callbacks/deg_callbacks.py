@@ -166,8 +166,8 @@ def populate_roi_presets(data_store):
      Output('custom-y-select', 'value', allow_duplicate=True),
      Output('embedding-select', 'value', allow_duplicate=True),
      Output('custom-projection', 'value', allow_duplicate=True)],
-    Input('roi-preset-select', 'value'),
-    State('data-store', 'data'),
+    [Input('roi-preset-select', 'value'),
+     Input('data-store', 'data')],
     prevent_initial_call=True,
 )
 def load_preset_region(region_name, data_store):
@@ -176,16 +176,22 @@ def load_preset_region(region_name, data_store):
     `gate()` in area_significant_deg.R); reproduces a Fig 6H/S23 panel after Run. Also switches
     the map to the raw DV/NT view it is defined in -- custom embedding, raw projection, axes
     pinned to NT.Score (x) / DV.Score (y) -- so the gate is drawn and run_deg_cb tests it in the
-    right space (otherwise loading a preset on UMAP/flower/sphere can't reproduce the volcano)."""
+    right space (otherwise loading a preset on UMAP/flower/sphere can't reproduce the volcano).
+
+    data-store is an Input (not State) so switching datasets RECOMPUTES the selected preset for
+    the new dataset's score range -- shared preset names (e.g. quadrants in chick + human) would
+    otherwise keep the previous dataset's min/max-scaled rectangle and run the wrong gate. If the
+    preset isn't defined for the new dataset, clear the stale ROI instead of leaving it."""
     nope = (no_update,) * 6
+    clear = ({'A': [], 'B': []}, None, no_update, no_update, no_update, no_update)
     if not region_name or not data_store:
         return nope
     spec = {r['name']: r for r in (data_store.get('figure_regions') or [])}.get(region_name)
     if not spec:
-        return nope
+        return clear   # preset not defined for this dataset (after a switch) -> drop stale gate
     adata = load_adata(data_store['filename'])
     if not {'NT.Score', 'DV.Score'} <= set(adata.obs.columns):
-        return nope
+        return clear
     nt = pd.to_numeric(adata.obs['NT.Score'], errors='coerce')
     dv = pd.to_numeric(adata.obs['DV.Score'], errors='coerce')
     nlo, nhi, dlo, dhi = float(nt.min()), float(nt.max()), float(dv.min()), float(dv.max())
