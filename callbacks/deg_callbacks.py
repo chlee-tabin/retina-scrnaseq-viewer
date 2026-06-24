@@ -63,28 +63,36 @@ def set_draw_mode(a_clicks, b_clicks, clear_clicks):
             _message_figure("Cleared. Draw an ROI (or load a figure region) and Run."))
 
 
-# ---- Invalidate stale results when the ROI changes (freehand draw, preset, URL restore) ----
-# The vertices store is also written by the JS draw tool and the preset loader, neither of
-# which goes through set_draw_mode -- so after a run, editing the polygon would leave the old
-# volcano/table/CSV on screen describing a region the map no longer shows. Clear them here, the
-# one place every vertex change routes through. Guarded so it only fires when there are results
-# to clear and the ROI is non-empty (Clear is already handled above; a fresh URL restore has
-# nothing stale to drop).
+# ---- Invalidate stale results when any run input changes ----
+# A stored result is a function of exactly run_deg_cb's inputs: the ROI, the dataset, the
+# min-cells floor, the custom axes, and the embedding/projection. If any of those changes after
+# a run -- editing the polygon, switching species, retargeting the axes, etc. -- the
+# volcano/table/CSV would still describe a contrast the map no longer shows (and the CSV would
+# download it). So we mirror run_deg_cb's State set here and clear the stores on any change.
+# Results only exist after a run and run_deg_cb writes none of these inputs, so this never wipes
+# a fresh result; Clear already nulls the store via set_draw_mode (so `not results` no-ops here).
+# Display-only controls (binning/smoothing/percentile, volcano thresholds) are deliberately
+# excluded -- they re-render existing results without changing the underlying test.
 @callback(
     [Output('deg-results-store', 'data', allow_duplicate=True),
      Output('deg-status', 'children', allow_duplicate=True),
      Output('deg-recap-plot', 'figure', allow_duplicate=True)],
-    Input('roi-vertices-store', 'data'),
+    [Input('roi-vertices-store', 'data'),
+     Input('data-store', 'data'),
+     Input('deg-min-cells', 'value'),
+     Input('custom-x-select', 'value'),
+     Input('custom-y-select', 'value'),
+     Input('embedding-select', 'value'),
+     Input('custom-projection', 'value')],
     State('deg-results-store', 'data'),
     prevent_initial_call=True,
 )
-def invalidate_on_roi_change(verts, results):
-    verts = verts or {}
-    has_roi = any(verts.get(k) for k in ('A', 'B'))
-    if not results or not has_roi:
+def invalidate_stale_results(verts, data_store, min_cells, custom_x, custom_y,
+                             embedding, projection, results):
+    if not results:
         raise PreventUpdate
     return (None, '',
-            _message_figure("ROI changed — click Run to recompute differential expression."))
+            _message_figure("Inputs changed — click Run to recompute differential expression."))
 
 
 # ---- Highlight the active draw button + report vertex counts ----
