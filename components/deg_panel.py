@@ -59,7 +59,8 @@ def create_deg_panel():
             style_cell={'fontSize': 12, 'fontFamily': 'monospace', 'textAlign': 'left'},
             style_header={'fontWeight': 'bold'}),
 
-        # Hidden sinks for the clientside drawing callbacks (setMode / syncVerts).
+        # Hidden sinks for the clientside drawing callbacks (setMode / syncVerts / redraw).
         html.Div(id='roi-mode-dummy', style={'display': 'none'}),
         html.Div(id='roi-verts-dummy', style={'display': 'none'}),
+        html.Div(id='roi-verts-dummy2', style={'display': 'none'}),
     ], id='deg-section', className='mt-2')

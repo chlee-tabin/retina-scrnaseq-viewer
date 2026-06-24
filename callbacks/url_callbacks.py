@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
      Output('wm-gap-mode', 'value', allow_duplicate=True),
      Output('wm-gap-frac', 'value', allow_duplicate=True),
      Output('wm-pole', 'value', allow_duplicate=True),
-     Output('group-value-source', 'value', allow_duplicate=True)],
+     Output('group-value-source', 'value', allow_duplicate=True),
+     Output('roi-vertices-store', 'data', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     prevent_initial_call='initial_duplicate'
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 24
+    n_out = 25
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -77,6 +78,7 @@ def initialize_from_url(search, pathname):
         state.get('wm_gap_frac', no_update),
         state.get('wm_pole', no_update),
         state.get('group_value_source', no_update),
+        state.get('roi', no_update),   # restore ROI polygons (drawn once the map renders)
     )
 
 @callback(
@@ -120,6 +122,7 @@ def initialize_from_url(search, pathname):
      State('wm-pole', 'value'),
      State('group-value-source', 'value'),
      State('group-meta-select', 'value'),
+     State('roi-vertices-store', 'data'),
      State('url', 'href')],
     prevent_initial_call=True
 )
@@ -133,7 +136,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
               wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
               group_value_source, group_meta,
-              current_url):
+              roi_verts, current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
 
@@ -195,6 +198,16 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
         state_dict['group_value_source'] = group_value_source
         if group_meta:
             state_dict['group_meta'] = group_meta
+
+    # ROI polygons (the differential-expression setup). Additive optional key -- old
+    # links lack it (restore to no ROI) and older viewers ignore it, so the URL stays
+    # backward compatible. Coords rounded to keep a handful of vertices compact.
+    roi = roi_verts or {}
+    roi_clean = {k: [[round(float(p[0]), 4), round(float(p[1]), 4)]
+                     for p in (roi.get(k) or [])]
+                 for k in ('A', 'B')}
+    if any(roi_clean.values()):
+        state_dict['roi'] = roi_clean
 
     base_url = current_url.split('?')[0]
     url_value = create_share_url(base_url, state_dict)

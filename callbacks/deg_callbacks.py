@@ -41,7 +41,7 @@ def toggle_deg_section(plot_type):
 # ---- Draw-mode buttons: pick which ROI to draw; Clear resets both ----
 @callback(
     [Output('roi-draw-mode-store', 'data'),
-     Output('roi-vertices-store', 'data')],
+     Output('roi-vertices-store', 'data', allow_duplicate=True)],
     [Input('roi-draw-a-btn', 'n_clicks'),
      Input('roi-draw-b-btn', 'n_clicks'),
      Input('roi-clear-btn', 'n_clicks')],
@@ -213,6 +213,17 @@ clientside_callback(
     "function(verts){ window.dash_clientside.roi.syncVerts(verts); return ''; }",
     Output('roi-verts-dummy', 'children'),
     Input('roi-vertices-store', 'data'),
+)
+# Redraw the stored polygons whenever the map figure (re)renders -- so a shared-URL ROI
+# draws once the plot mounts, and an ROI survives a view change (which replaces the figure
+# and would otherwise wipe the overlay). Deferred a tick so the figure settles first.
+clientside_callback(
+    "function(_fig, verts){ if (verts) setTimeout(function(){ "
+    "window.dash_clientside.roi.syncVerts(verts); }, 60); return ''; }",
+    Output('roi-verts-dummy2', 'children'),
+    Input('main-plot', 'figure'),
+    State('roi-vertices-store', 'data'),
+    prevent_initial_call=True,
 )
 
 
