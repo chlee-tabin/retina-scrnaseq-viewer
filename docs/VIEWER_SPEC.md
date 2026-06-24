@@ -136,10 +136,10 @@ Base64-encoded JSON carried in `?state=`. Keys (only those relevant to the curre
 view are written; absent keys restore to defaults):
 
 ```
-v=2, dataset, embedding, color, gene, mode, plot_type,
+v=2, dataset, embedding, color, gene, mode, plot_type, smooth_sigma,
 compare_genes, gene2, compare_shared_scale,                       # two-gene
 custom_x, custom_y, bins, percentile, enable_binning,             # map binning
-  enable_smoothing, smooth_sigma, bin_stat,
+  enable_smoothing, bin_stat,
 custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount flower / sphere (3D)
   wm_cuts, wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode,
   wm_gap_frac, wm_pole,
@@ -159,10 +159,12 @@ only in sphere mode when the user has rotated; one camera covers both compare pa
 
 Added in v0.31 (additive, backward compatible): `smooth_sigma` — the Gaussian
 smoothing strength, now a live slider rather than a fixed per-dataset config value
-(the config value is just the slider's default on dataset load). A pre-v0.31 link
-omits the key, so `update_data` restores the per-dataset default in force then
-(`LEGACY_SMOOTH_SIGMA` in `utils/smoothing.py`: chick 2.0 / mouse 2.0 / **human 0.5** — the old
-near-no-op default, since corrected to 2.0) and the shared view is reproduced exactly.
+(the config value is just the slider's default on dataset load). Written for EVERY
+new link (top-level, not only the spatial view) so that a *missing* key uniquely
+identifies a pre-v0.31 link. For those, `update_data` restores the per-dataset
+default in force then (`LEGACY_SMOOTH_SIGMA` in `utils/smoothing.py`: chick 2.0 /
+mouse 2.0 / **human 0.5** — the old near-no-op default, since corrected to 2.0), so
+the shared view is reproduced exactly; a fresh link always carries its explicit σ.
 
 **Restoration ownership** (each control is written by exactly one restore-capable
 callback, and each reads the same URL state):

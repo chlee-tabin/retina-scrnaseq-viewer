@@ -186,6 +186,12 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
         'mode': viz_mode,
         'plot_type': plot_type,
     }
+    # Smoothing-slider sigma (v0.31+) is written for EVERY new link, not just the
+    # spatial-map view, so that "no smooth_sigma key" cleanly identifies a pre-slider
+    # link. resolve_smooth_sigma then falls back to the OLD per-dataset default only
+    # for genuinely old links -- never for a fresh link shared from a UMAP/group view
+    # whose recipient later switches to the spatial map. (Codex P2.)
+    state_dict['smooth_sigma'] = smooth_sigma
 
     if color_by == 'gene_expression' and gene:
         state_dict['gene'] = gene
@@ -232,9 +238,6 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
         state_dict['percentile'] = percentile
         state_dict['enable_binning'] = enable_binning
         state_dict['enable_smoothing'] = enable_smoothing
-        # Slider sigma (v0.31+). Old links omit it -> update_data restores the old
-        # per-dataset default (LEGACY_SMOOTH_SIGMA) so they look unchanged.
-        state_dict['smooth_sigma'] = smooth_sigma
         state_dict['bin_stat'] = bin_stat
 
     # Expression-by-group controls.
