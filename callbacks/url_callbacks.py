@@ -122,6 +122,7 @@ def initialize_from_url(search, pathname):
      State('percentile-slider', 'value'),
      State('enable-binning', 'value'),
      State('enable-smoothing', 'value'),
+     State('smooth-sigma-slider', 'value'),
      State('bin-stat', 'value'),
      State('compare-genes', 'value'),
      State('gene-select-2', 'value'),
@@ -164,7 +165,7 @@ def initialize_from_url(search, pathname):
 @log_callback_info
 def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               custom_x, custom_y, custom_projection, bin_number, percentile, enable_binning,
-              enable_smoothing, bin_stat, compare_genes, gene2, compare_shared_scale,
+              enable_smoothing, smooth_sigma, bin_stat, compare_genes, gene2, compare_shared_scale,
               plot_type, group_gene, group_by, group_split, group_style,
               gene_module, group_positive_only, group_replicate,
               wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
@@ -231,6 +232,9 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
         state_dict['percentile'] = percentile
         state_dict['enable_binning'] = enable_binning
         state_dict['enable_smoothing'] = enable_smoothing
+        # Slider sigma (v0.31+). Old links omit it -> update_data restores the old
+        # per-dataset default (LEGACY_SMOOTH_SIGMA) so they look unchanged.
+        state_dict['smooth_sigma'] = smooth_sigma
         state_dict['bin_stat'] = bin_stat
 
     # Expression-by-group controls.

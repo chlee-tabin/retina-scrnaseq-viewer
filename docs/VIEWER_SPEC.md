@@ -36,7 +36,8 @@ Two top-level views, switched by **View** (`plot-type`):
 | `custom-x-select` / `custom-y-select` | map | Axes for the custom embedding |
 | `enable-binning` | map (custom) | Binned "metacell" spatial view |
 | `bin-stat` | map (custom) | Bin colour: `mean` expression vs `frac_pos` (% positive) |
-| `enable-smoothing` | map (custom) | Gaussian smoothing of the binned map |
+| `enable-smoothing` | map (custom) | Gaussian smoothing of the binned map (on/off gate) |
+| `smooth-sigma-slider` | map (custom) | Smoothing strength σ (0–4, bin units); per-dataset config = default |
 | `bin-number-slider` | map (custom) | Number of bins (2–120) |
 | `percentile-slider` | map (custom) | Colour-scale percentile cutoff |
 | `color-select` | map | Gene expression or an obs column |
@@ -138,7 +139,7 @@ view are written; absent keys restore to defaults):
 v=2, dataset, embedding, color, gene, mode, plot_type,
 compare_genes, gene2, compare_shared_scale,                       # two-gene
 custom_x, custom_y, bins, percentile, enable_binning,             # map binning
-  enable_smoothing, bin_stat,
+  enable_smoothing, smooth_sigma, bin_stat,
 custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount flower / sphere (3D)
   wm_cuts, wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode,
   wm_gap_frac, wm_pole,
@@ -156,6 +157,13 @@ written for any non-raw whole-mount view); `haa_mode` (the HAA-pointer definitio
 written for any custom-embedding view); and `sphere_cam` (the 3D camera, written
 only in sphere mode when the user has rotated; one camera covers both compare panels).
 
+Added in v0.31 (additive, backward compatible): `smooth_sigma` — the Gaussian
+smoothing strength, now a live slider rather than a fixed per-dataset config value
+(the config value is just the slider's default on dataset load). A pre-v0.31 link
+omits the key, so `update_data` restores the per-dataset default in force then
+(`LEGACY_SMOOTH_SIGMA` in `utils/smoothing.py`: chick 2.0 / mouse 2.0 / **human 0.5** — the old
+near-no-op default, since corrected to 2.0) and the shared view is reproduced exactly.
+
 **Restoration ownership** (each control is written by exactly one restore-capable
 callback, and each reads the same URL state):
 
@@ -165,7 +173,9 @@ callback, and each reads the same URL state):
   ng_layers/ng_frac/ng_dorsal/ng_ventral, and the sphere camera `sphere_cam`).
   Fires on initial load (`prevent_initial_call='initial_duplicate'`) so a pasted
   link works.
-- `app.update_data` → embedding, colour, gene (triggered by the restored dataset).
+- `app.update_data` → embedding, colour, gene, and `smooth-sigma-slider` (triggered
+  by the restored dataset; the slider's sigma is resolved URL-value > legacy default
+  > config default by `resolve_smooth_sigma`).
 - `main_callbacks.update_custom_embedding_controls` → custom_x / custom_y.
 - `main_callbacks.populate_group_controls` → all group controls.
 

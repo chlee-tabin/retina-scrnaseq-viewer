@@ -1,5 +1,5 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback
+from dash import html, dcc, Input, Output, State, callback, no_update
 import dash_bootstrap_components as dbc
 import numpy as np
 import pandas as pd
@@ -27,6 +27,7 @@ from callbacks.deg_callbacks import *
 from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import state_for_dataset
+from utils.smoothing import resolve_smooth_sigma
 from components.status_bar import create_status_bar
 
 # Add command line argument parsing. Use parse_known_args (not parse_args) so that
@@ -258,7 +259,8 @@ def update_dataset_info(dataset_id, data_store):
      Output('gene-select', 'value', allow_duplicate=True),
      Output('gene-select', 'options', allow_duplicate=True),
      Output('loading-output', 'children', allow_duplicate=True),
-     Output('embedding-select', 'value', allow_duplicate=True)],
+     Output('embedding-select', 'value', allow_duplicate=True),
+     Output('smooth-sigma-slider', 'value', allow_duplicate=True)],
     [Input('dataset-select', 'value'),
      Input('url', 'search')],
     [State('color-select', 'value'),
@@ -269,7 +271,7 @@ def update_dataset_info(dataset_id, data_store):
 @log_callback_info
 def update_data(dataset_id, url_search, current_color, current_gene):
     if not dataset_id:
-        return None, [], [], None, None, [], "", 'custom_embedding'
+        return None, [], [], None, None, [], "", 'custom_embedding', no_update
     
     try:
         config = load_dataset_config()
@@ -344,6 +346,10 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         state = state_for_dataset(url_search, dataset_id) if url_search else None
         url_color = state.get('color') if state else None
         url_gene = state.get('gene') if state else None
+        # Smoothing-slider value: shared-link sigma > old per-dataset default (legacy
+        # link) > current config default. The enable-smoothing checkbox still gates it.
+        smooth_sigma_value = resolve_smooth_sigma(
+            state, dataset_id, dataset.get('smooth_sigma', 1.5))
         
         # Always include Gene Expression option
         color_options = [
@@ -388,12 +394,12 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             config_default=dataset.get('default_embedding'),
             url_embedding=(state.get('embedding') if state else None))
 
-        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, "", embedding_value
+        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, "", embedding_value, smooth_sigma_value
         
     except Exception as e:
         error_message = f"Error loading data: {str(e)}"
         logger.error(error_message)
-        return None, [], [], None, None, [], error_message, 'custom_embedding'
+        return None, [], [], None, None, [], error_message, 'custom_embedding', no_update
 
 # NOTE: restoring controls from a shared URL is handled solely by
 # callbacks/url_callbacks.initialize_from_url (which sets the dataset + the global
