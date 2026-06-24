@@ -200,15 +200,25 @@ def load_preset_region(region_name, data_store):
     return {'A': rect, 'B': []}, None, 'NT.Score', 'DV.Score', 'custom_embedding', 'raw'
 
 
-def _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, projection):
-    """Stable hash of every input that determines a DE result. Stored with the result and
-    re-checked when the volcano/table/CSV are produced: a long run that finishes AFTER the
-    user changed an input (gunicorn runs callbacks on threads, so the invalidation callback
-    can't stop a late write) would otherwise resurrect a result for a region the map no longer
-    shows. A signature mismatch means the stored result is stale -> don't display or export it."""
+def _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, projection,
+                   color_by=None, enable_binning=None):
+    """Stable hash of everything that determines whether a stored DE result is valid for the
+    CURRENT view. Stored with the result and re-checked wherever the result surfaces
+    (volcano/table/CSV/recap/status): a long run that finishes AFTER the user changed an input
+    (gunicorn runs callbacks on threads, so the invalidation callbacks can't stop a late write)
+    would otherwise resurrect a result for a view the map no longer shows. A mismatch => stale =>
+    don't display or export it.
+
+    `faceted` folds in view *capability*: the category-faceted binned view has per-facet axes
+    that run_deg_cb refuses, so any result is invalid there -- including one whose run finished
+    after the switch. A benign recolour between DE-capable views leaves it False (result kept),
+    so colour/binning are captured only through this derived bit, not raw."""
+    col_types = (data_store or {}).get('column_types', {})
+    faceted = bool(_on(enable_binning) and color_by and color_by != 'gene_expression'
+                   and col_types.get(color_by) == 'categorical')
     payload = {'verts': verts or {}, 'file': (data_store or {}).get('filename'),
                'min_cells': int(min_cells or 50), 'x': custom_x, 'y': custom_y,
-               'embedding': embedding, 'projection': projection}
+               'embedding': embedding, 'projection': projection, 'faceted': faceted}
     return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
 
@@ -304,7 +314,8 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         info.update(sel_info)
         # NaN padj/LFC (low-count genes) is not valid JSON for a dcc.Store -> None.
         records = res.astype(object).where(pd.notnull(res), None).to_dict('records')
-        sig = _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, projection)
+        sig = _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding,
+                             projection, color_by, enable_binning)
         return ({'records': records, 'sig': sig, 'solo': info.get('solo', 'A')},
                 recap, _status(info, min_cells))
     except Exception as e:
@@ -344,18 +355,20 @@ def _status(info, min_cells):
      State('custom-x-select', 'value'),
      State('custom-y-select', 'value'),
      State('embedding-select', 'value'),
-     State('custom-projection', 'value')],
+     State('custom-projection', 'value'),
+     State('color-select', 'value'),
+     State('enable-binning', 'value')],
     prevent_initial_call=True,
 )
 def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells,
-                   custom_x, custom_y, embedding, projection):
+                   custom_x, custom_y, embedding, projection, color_by, enable_binning):
     if not stored or not stored.get('records'):
         return _message_figure("Draw an ROI and Run to see the volcano."), [], []
     # Reject a result whose inputs no longer match the current view (a late run that completed
-    # after the user changed the ROI/dataset/axes). The volcano/table must never describe a
-    # region the map isn't showing.
+    # after the user changed the ROI/dataset/axes, or switched to the unsupported faceted view).
+    # The volcano/table must never describe a view the map isn't showing.
     if stored.get('sig') != _run_signature(verts, data_store, min_cells, custom_x, custom_y,
-                                            embedding, projection):
+                                            embedding, projection, color_by, enable_binning):
         return _message_figure("Inputs changed — click Run to recompute for the current view."), [], []
     res = pd.DataFrame(stored['records'])
     for c in ('baseMean', 'log2FoldChange', 'pvalue', 'padj'):
@@ -380,6 +393,36 @@ def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells
     return fig, data, columns
 
 
+# ---- Gate the recap + status the same way as the volcano/table ----
+# run_deg_cb writes the recap and status directly, so a late stale run would leave them
+# describing a view the map no longer shows even though render_results blanks the volcano. This
+# runs downstream of the results store, so it fires after run_deg_cb's write: keep its fresh
+# recap/status when the signature still matches, clear them when it doesn't.
+@callback(
+    [Output('deg-recap-plot', 'figure', allow_duplicate=True),
+     Output('deg-status', 'children', allow_duplicate=True)],
+    Input('deg-results-store', 'data'),
+    [State('roi-vertices-store', 'data'),
+     State('data-store', 'data'),
+     State('deg-min-cells', 'value'),
+     State('custom-x-select', 'value'),
+     State('custom-y-select', 'value'),
+     State('embedding-select', 'value'),
+     State('custom-projection', 'value'),
+     State('color-select', 'value'),
+     State('enable-binning', 'value')],
+    prevent_initial_call=True,
+)
+def gate_recap_status(stored, verts, data_store, min_cells, custom_x, custom_y,
+                      embedding, projection, color_by, enable_binning):
+    if not stored or not stored.get('records'):
+        raise PreventUpdate   # nothing stored / already cleared by the invalidation callbacks
+    if stored.get('sig') == _run_signature(verts, data_store, min_cells, custom_x, custom_y,
+                                           embedding, projection, color_by, enable_binning):
+        raise PreventUpdate   # fresh result -> leave run_deg_cb's recap + status in place
+    return _message_figure("Inputs changed — click Run to recompute."), ''
+
+
 # ---- CSV download of the full results table ----
 @callback(
     Output('deg-download', 'data'),
@@ -391,16 +434,18 @@ def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells
      State('custom-x-select', 'value'),
      State('custom-y-select', 'value'),
      State('embedding-select', 'value'),
-     State('custom-projection', 'value')],
+     State('custom-projection', 'value'),
+     State('color-select', 'value'),
+     State('enable-binning', 'value')],
     prevent_initial_call=True,
 )
 def download_deg(n_clicks, stored, verts, data_store, min_cells, custom_x, custom_y,
-                 embedding, projection):
+                 embedding, projection, color_by, enable_binning):
     if not n_clicks or not stored or not stored.get('records'):
         raise PreventUpdate
-    # Don't export a result for a region the map no longer shows (see _run_signature).
+    # Don't export a result for a view the map no longer shows (see _run_signature).
     if stored.get('sig') != _run_signature(verts, data_store, min_cells, custom_x, custom_y,
-                                           embedding, projection):
+                                           embedding, projection, color_by, enable_binning):
         raise PreventUpdate
     df = pd.DataFrame(stored['records']).sort_values('padj', na_position='last')
     return dcc.send_data_frame(df.to_csv, "roi_deg.csv", index=False)
