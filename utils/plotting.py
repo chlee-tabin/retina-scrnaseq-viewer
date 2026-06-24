@@ -738,10 +738,10 @@ def _orientation_labels(sx, sy, sz, haa_xyz=None):
     nasal +x, dorsal +y, temporal -x, ventral -y. Each floats just beyond the data rim in its
     direction (95th-pct colatitude there) and is lifted off the unit sphere so the cap doesn't
     occlude it; text billboards to the camera. The HAA landmark is dataset-specific: drawn (a
-    crimson diamond + 'HAA') only when `haa_xyz` is given -- e.g. the footprint centre of chick
-    CYP26C1+ cells (see _haa_landmark) -- so human/mouse, which configure no marker, get NO HAA
-    label. The HAA sits at the marker's actual location, not the score-origin pole. Returns a
-    LIST of traces."""
+    crimson diamond + 'HAA') only when `haa_xyz` is given -- the selected HAA-mode centre of
+    chick CYP26C1+ cells (callbacks.main_callbacks._haa_center / wholemount.haa_center) -- so
+    human/mouse, which configure no marker, get NO HAA label. The HAA sits at the marker's
+    actual location, not the score-origin pole. Returns a LIST of traces."""
     sx = np.asarray(sx, dtype=float); sy = np.asarray(sy, dtype=float); sz = np.asarray(sz, dtype=float)
     m = np.isfinite(sx) & np.isfinite(sy) & np.isfinite(sz)
     sx, sy, sz = sx[m], sy[m], sz[m]
@@ -772,16 +772,20 @@ def _orientation_labels(sx, sy, sz, haa_xyz=None):
     return traces
 
 
+def _haa_caption_text(haa_marker, haa_mode):
+    """The HAA footnote text, shared by the sphere caption and the 2D marker: names the active
+    mode and notes the definition is selectable (the marker is sparse, so the centres differ)."""
+    desc = wm.HAA_MODE_DESC.get(haa_mode, 'centre')
+    return (f"◆ HAA = {haa_marker} {desc}.  Definition selectable "
+            f"(footprint / expression / domain / peak) — {haa_marker} is sparse, so these differ.")
+
+
 def _haa_caption(fig, haa_xyz, haa_marker, haa_mode=None):
     """Footnote naming the HAA landmark's active definition (only when a diamond is drawn), so
-    the mark isn't unexplained. The marker is sparse, so several 'centres' differ; the HAA-mode
-    control lets the user switch between them -- the caption states which one is shown."""
+    the mark isn't unexplained. Bottom-left paper corner (fine over the sphere's whitespace)."""
     if haa_xyz is not None and haa_marker:
-        desc = wm.HAA_MODE_DESC.get(haa_mode, 'centre')
         fig.add_annotation(
-            text=(f"◆ HAA = {haa_marker} {desc}.  "
-                  f"Definition selectable (footprint / expression / domain / peak) — "
-                  f"{haa_marker} is sparse, so these differ."),
+            text=_haa_caption_text(haa_marker, haa_mode),
             xref='paper', yref='paper', x=0.0, y=0.0, xanchor='left', yanchor='bottom',
             align='left', showarrow=False, font=dict(size=10, color='#c1121f'))
     return fig
@@ -801,10 +805,8 @@ def _add_haa_marker_2d(fig, x, y, haa_marker, haa_mode=None):
         textfont=dict(size=13, color='#c1121f'),
         marker=dict(size=11, color='#c1121f', symbol='diamond'),
         hoverinfo='skip', showlegend=False, name='HAA'))
-    desc = wm.HAA_MODE_DESC.get(haa_mode, 'centre')
     fig.add_annotation(
-        text=(f"◆ HAA = {haa_marker} {desc}.  "
-              f"Definition selectable (footprint / expression / domain / peak)."),
+        text=_haa_caption_text(haa_marker, haa_mode),
         xref='paper', yref='paper', x=0.0, y=-0.13, xanchor='left', yanchor='top',
         align='left', showarrow=False, font=dict(size=10, color='#c1121f'))
     fig.update_layout(margin_b=96)   # room below the x-axis for the caption

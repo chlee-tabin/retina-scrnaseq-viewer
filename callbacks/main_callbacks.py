@@ -35,7 +35,7 @@ def _gene_vector(adata, gene):
     return np.asarray(sub).flatten()
 
 
-def _haa_center(adata, dv, nt, marker, mode, *, min_cells=5, smooth_sigma=0.0):
+def _haa_center(adata, dv, nt, marker, mode, *, bin_size=50, min_cells=5, smooth_sigma=0.0):
     """(dv, nt) HAA centre for the dataset's marker (chick: CYP26C1) by the chosen `mode`
     (wholemount.haa_center: footprint / expression / domain / peak). The marker is sparse and
     ring-ish, so 'the centre' depends on the definition -- the HAA-mode control exposes them.
@@ -47,7 +47,8 @@ def _haa_center(adata, dv, nt, marker, mode, *, min_cells=5, smooth_sigma=0.0):
     expr = np.asarray(_gene_vector(adata, marker), dtype=float)
     if int(np.count_nonzero(expr > 0)) < 5:
         return None
-    return wholemount.haa_center(dv, nt, expr, mode, min_cells=min_cells, smooth_sigma=smooth_sigma)
+    return wholemount.haa_center(dv, nt, expr, mode, bin_size=bin_size,
+                                 min_cells=min_cells, smooth_sigma=smooth_sigma)
 
 
 # Persist the user's 3D-sphere rotation across re-renders. dcc.Graph's uirevision does NOT
@@ -411,6 +412,10 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         sphere_xyz = None    # (x, y, z) on the unit sphere when the 3D projection is active
         haa_xyz = None       # HAA landmark position on the sphere (dataset-specific marker)
         nasal_gap_eff = None # exploratory uncaptured-nasal band params (sphere + chick only)
+        # The HAA landmark must be computed on the SAME binned field the user sees, or the
+        # diamond lands on a different grid/smoothing than the displayed map: track the active
+        # bin count (bin_number) and the effective smoothing (off when the toggle is off).
+        haa_smooth = float(data_store.get('smooth_sigma', 0) or 0) if _on(enable_smoothing) else 0.0
         if embedding == 'custom_embedding':
             if custom_projection in ('flower', 'sphere'):
                 # Whole-mount reprojection of the DV/NT topographic scores: the flat "flower"
@@ -446,8 +451,9 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     sphere_xyz = wholemount.sphere_coords(dv_cells, nt_cells, params=proj_params)
                     x, y = sphere_xyz[0], sphere_xyz[1]
                     hc = _haa_center(adata, dv_cells, nt_cells, data_store.get('haa_marker'),
-                                     haa_mode, min_cells=data_store.get('min_cells_per_bin', 5),
-                                     smooth_sigma=data_store.get('smooth_sigma', 2.0))
+                                     haa_mode, bin_size=bin_number,
+                                     min_cells=data_store.get('min_cells_per_bin', 5),
+                                     smooth_sigma=haa_smooth)
                     if hc is not None:
                         hx, hy, hz = wholemount.sphere_coords(np.array([hc[0]]), np.array([hc[1]]),
                                                               params=proj_params)
@@ -645,8 +651,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 and wholemount.has_scores(adata.obs.columns)):
             hc = _haa_center(adata, adata.obs[wholemount.DV_COL].to_numpy(),
                              adata.obs[wholemount.NT_COL].to_numpy(), haa_marker, haa_mode,
-                             min_cells=data_store.get('min_cells_per_bin', 5),
-                             smooth_sigma=data_store.get('smooth_sigma', 2.0))
+                             bin_size=bin_number, min_cells=data_store.get('min_cells_per_bin', 5),
+                             smooth_sigma=haa_smooth)
             if hc is not None:
                 hdv, hnt = hc
                 if custom_projection == 'flower':
