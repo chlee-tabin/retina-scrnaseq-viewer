@@ -127,7 +127,7 @@ datasets:
     last_updated: "2025-06-04"
     author: "Reprocessed public data: GSE138002, GSE234963, GSE246169"
     default_gene: "FGF8"
-    smooth_sigma: 0.5
+    smooth_sigma: 2.0          # match chick/mouse RPC; 0.5 was a near-no-op (kernel stayed in the center bin)
     min_cells_per_bin: 2
     # Pseudobulk replicate unit for the ROI differential-expression volcano: 14 individual
     # donor eyes / libraries (PCW7-11), complete (no missing values; `sample` has NaN for
