@@ -39,7 +39,10 @@ def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subti
 
     fig.add_vline(x=lfc_thresh, line=dict(color='grey', dash='dash', width=1))
     fig.add_vline(x=-lfc_thresh, line=dict(color='grey', dash='dash', width=1))
-    fig.add_hline(y=-np.log10(padj_thresh), line=dict(color='grey', dash='dash', width=1))
+    # Only draw the significance line for a positive threshold -- padj_thresh == 0 (which
+    # flags nothing) would make -log10 infinite and break the render.
+    if padj_thresh and padj_thresh > 0:
+        fig.add_hline(y=-np.log10(padj_thresh), line=dict(color='grey', dash='dash', width=1))
 
     # Label the most significant genes (by padj) among the flagged set.
     for _, row in r[sig].nsmallest(top_n, 'padj').iterrows():

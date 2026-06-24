@@ -16,6 +16,7 @@ import pandas as pd
 from dash import (Input, Output, State, callback, clientside_callback, ctx, dcc,
                   html, no_update)
 from dash.exceptions import PreventUpdate
+from dash.dash_table.Format import Format, Scheme
 import dash_bootstrap_components as dbc
 
 from utils.data_loading import load_adata
@@ -274,14 +275,18 @@ def render_results(records, lfc_thresh, padj_thresh):
     padj_t = float(padj_thresh) if padj_thresh not in (None, '') else 0.05
     fig = create_volcano_figure(res, lfc_thresh=lfc_t, padj_thresh=padj_t)
 
-    show = res.sort_values('padj', na_position='last').copy()
-    for c in ('baseMean', 'log2FoldChange', 'pvalue', 'padj'):
-        if c in show:
-            show[c] = show[c].map(lambda v: f"{v:.3g}" if pd.notnull(v) else "")
+    # Keep the table values NUMERIC so DataTable's native sort orders numerically rather than
+    # lexicographically; show ~3 significant figures via the column format instead of pre-
+    # formatting to strings. NaN -> None renders as a blank cell.
     cols_order = [c for c in ('gene', 'log2FoldChange', 'padj', 'pvalue', 'baseMean')
-                  if c in show.columns]
-    columns = [{'name': c, 'id': c} for c in cols_order]
-    return fig, show[cols_order].to_dict('records'), columns
+                  if c in res.columns]
+    show = res.sort_values('padj', na_position='last')[cols_order]
+    data = show.astype(object).where(pd.notnull(show), None).to_dict('records')
+    numfmt = Format(precision=3, scheme=Scheme.decimal_or_exponent)
+    columns = [{'name': c, 'id': c} if c == 'gene'
+               else {'name': c, 'id': c, 'type': 'numeric', 'format': numfmt}
+               for c in cols_order]
+    return fig, data, columns
 
 
 # ---- CSV download of the full results table ----
