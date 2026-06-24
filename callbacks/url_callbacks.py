@@ -36,6 +36,12 @@ logger = logging.getLogger(__name__)
      Output('wm-gap-frac', 'value', allow_duplicate=True),
      Output('wm-pole', 'value', allow_duplicate=True),
      Output('group-value-source', 'value', allow_duplicate=True),
+     Output('nasal-gap-layers', 'value', allow_duplicate=True),
+     Output('nasal-gap-frac', 'value', allow_duplicate=True),
+     Output('nasal-gap-dorsal', 'value', allow_duplicate=True),
+     Output('nasal-gap-ventral', 'value', allow_duplicate=True),
+     Output('haa-mode', 'value', allow_duplicate=True),
+     Output('sphere-camera-store', 'data', allow_duplicate=True),
      Output('roi-vertices-store', 'data', allow_duplicate=True),
      Output('volcano-lfc-thresh', 'value', allow_duplicate=True),
      Output('volcano-padj-thresh', 'value', allow_duplicate=True)],
@@ -46,7 +52,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 27
+    n_out = 33
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -80,6 +86,15 @@ def initialize_from_url(search, pathname):
         state.get('wm_gap_frac', no_update),
         state.get('wm_pole', no_update),
         state.get('group_value_source', no_update),
+        # Uncaptured-nasal cap + sphere camera. Absent in pre-v0.221 links -> no_update ->
+        # the controls keep their R2.5 defaults and the camera its face-on default
+        # (backward compatible: old URLs still load, just without these tweaks).
+        state.get('ng_layers', no_update),
+        state.get('ng_frac', no_update),
+        state.get('ng_dorsal', no_update),
+        state.get('ng_ventral', no_update),
+        state.get('haa_mode', no_update),
+        state.get('sphere_cam', no_update),
         state.get('roi', no_update),         # restore ROI polygons (drawn once the map renders)
         state.get('volcano_lfc', no_update), # absent -> keep the layout default (1.0)
         state.get('volcano_padj', no_update),# absent -> keep the layout default (0.05)
@@ -126,6 +141,12 @@ def initialize_from_url(search, pathname):
      State('wm-pole', 'value'),
      State('group-value-source', 'value'),
      State('group-meta-select', 'value'),
+     State('nasal-gap-layers', 'value'),
+     State('nasal-gap-frac', 'value'),
+     State('nasal-gap-dorsal', 'value'),
+     State('nasal-gap-ventral', 'value'),
+     State('haa-mode', 'value'),
+     State('sphere-camera-store', 'data'),
      State('roi-vertices-store', 'data'),
      State('volcano-lfc-thresh', 'value'),
      State('volcano-padj-thresh', 'value'),
@@ -142,6 +163,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
               wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
               group_value_source, group_meta,
+              ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode, sphere_cam,
               roi_verts, volcano_lfc, volcano_padj, current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
@@ -172,6 +194,9 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
     if embedding == 'custom_embedding':
         state_dict['custom_x'] = custom_x
         state_dict['custom_y'] = custom_y
+        # HAA-pointer mode (applies to all projections incl. raw NT/DV axes; chick-gated on load).
+        if haa_mode:
+            state_dict['haa_mode'] = haa_mode
         if custom_projection and custom_projection != 'raw':
             state_dict['custom_projection'] = custom_projection
             # Advanced whole-mount projection parameters (only when the flower view is on).
@@ -186,6 +211,15 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
             state_dict['wm_gap_mode'] = wm_gap_mode
             state_dict['wm_gap_frac'] = wm_gap_frac
             state_dict['wm_pole'] = wm_pole
+            # Uncaptured-nasal-cap controls (flower + sphere; restore to R2.5 if absent).
+            state_dict['ng_layers'] = ng_layers
+            state_dict['ng_frac'] = ng_frac
+            state_dict['ng_dorsal'] = ng_dorsal
+            state_dict['ng_ventral'] = ng_ventral
+            # 3D-sphere viewpoint: the shared camera (one per figure, applied to both the
+            # single panel and each of the 2 compare panels). Only when set (user rotated).
+            if custom_projection == 'sphere' and sphere_cam:
+                state_dict['sphere_cam'] = sphere_cam
         state_dict['bins'] = bin_number
         state_dict['percentile'] = percentile
         state_dict['enable_binning'] = enable_binning

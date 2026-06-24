@@ -166,7 +166,9 @@ def flower_transform(dv, nt, **p):
             st = st + amp * np.exp(-0.5 * (d / np.deg2rad(wid)) ** 2)
         R = R * st
     X = R * np.cos(phi); Y = R * np.sin(phi)
-    return X, Y, dict(r=r, rho=rho, phi=phi, gore=gore, pole=(dv0, nt0), scale=(sx, sy))
+    # `theta` is the raw azimuth (pre-gore, pre-stretch); `phi` is after the relief gaps.
+    # The sphere view reuses (rho, theta) -- its native, un-ripped geometry (see sphere_coords).
+    return X, Y, dict(r=r, rho=rho, theta=th, phi=phi, gore=gore, pole=(dv0, nt0), scale=(sx, sy))
 
 
 def compute_scale_fit(dv, nt, **p):
@@ -209,6 +211,121 @@ def wholemount_coords(dv, nt, params=None):
     return np.asarray(X, dtype=float), np.asarray(Y, dtype=float)
 
 
+def sphere_coords(dv, nt, params=None):
+    """(DV, NT) score arrays -> (x, y, z) on the UNIT SPHERE: the topographic map on its
+    native (near-spherical) geometry, of which the flat flower is the azimuthal-equidistant
+    projection (display radius = colatitude). The colatitude `rho` (the arcsin-dewarped
+    spherical-cap angle) and azimuth `theta` come straight from flower_transform, so the
+    sphere shares the flower's pole + per-axis scale basis when the same `params` (with a
+    compute_scale_fit) are passed.
+
+    The flat layout's relief cuts / wedge gap / petal stretch are FLATTENING devices for a
+    curved surface (they relieve the curvature deficit); on the sphere there is no deficit,
+    so they are intentionally ignored here -- the surface is continuous and un-ripped.
+
+    Orientation matches the flower: HAA pole at the top (+z, rho=0); nasal -> +x, dorsal ->
+    +y. Cells only reach rho <= rho_max (~64-82 deg), so they cover a polar CAP; the
+    uncaptured periphery and the nasal gap are simply empty sphere (no cell there).
+    """
+    P = dict(LOCKED_PARAMS if params is None else params)
+    _, _, diag = flower_transform(dv, nt, **P)
+    rho = np.asarray(diag['rho'], dtype=float)
+    th = np.asarray(diag['theta'], dtype=float)
+    sin_rho = np.sin(rho)
+    return sin_rho * np.cos(th), sin_rho * np.sin(th), np.cos(rho)
+
+
+def marker_footprint_center(dv, nt, present, *, bin_size=50, min_cells=5):
+    """Geometric centre of a sparse marker's footprint in (DV, NT) score space: the
+    equal-weight centroid of the score-grid BINS that contain >=1 'present' cell (and clear the
+    cell floor). Returns (dv, nt) or None.
+
+    Bin-PRESENCE, not per-cell density: each occupied bin counts once, so the centre is the
+    middle of where the marker is detected (its "bull's-eye" / ring centre) and is NOT dragged
+    toward whichever side happens to have more detected cells. This is the robust landmark for a
+    marker seen in <1% of cells (chick CYP26C1 -> HAA): a per-cell median/mean, or a per-bin
+    expression-weighted centre, chases the densest / brightest specks (which sparsity scatters
+    to the periphery), whereas the footprint centroid stays at the spatial centre. `min_cells`
+    matches the displayed binned map so the landmark sits on bins the user actually sees.
+    """
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float)
+    present = np.asarray(present, dtype=bool)
+    fin = np.isfinite(dv) & np.isfinite(nt)
+    if not fin.any():
+        return None
+    nb = int(bin_size)
+    cnt, ne, de = np.histogram2d(nt[fin], dv[fin], bins=nb)          # x=NT, y=DV (as the map)
+    pcnt, _, _ = np.histogram2d(nt[fin & present], dv[fin & present], bins=[ne, de])
+    foot = (pcnt > 0) & (cnt >= max(1, int(min_cells)))
+    if not foot.any():
+        return None
+    ntc = (ne[:-1] + ne[1:]) / 2; dvc = (de[:-1] + de[1:]) / 2
+    NTc, DVc = np.meshgrid(ntc, dvc, indexing='ij')
+    return float(DVc[foot].mean()), float(NTc[foot].mean())
+
+
+# HAA-pointer modes (label shown in the control + the caption description). The marker is
+# sparse and ring-ish, so "the centre" legitimately depends on weighting -- expose the choice.
+HAA_MODE_DESC = {
+    'footprint':  'detection-footprint centre (centroid of marker+ bins)',
+    'expression': 'expression-weighted centre (binned-mean centre of mass)',
+    'domain':     'expression-domain centre (bins ≥ 50% of peak; FISH-calibrated gate)',
+    'peak':       'expression peak (top bins, ≥ 95th-pctile of bin means)',
+}
+
+
+def haa_center(dv, nt, expr, mode='domain', *, bin_size=50, min_cells=5, frac=0.5,
+               peak_pctile=95.0, smooth_sigma=0.0):
+    """(dv, nt) centre of a marker's HAA in score space, by one of several definitions; None if
+    undefined. The marker (chick: CYP26C1) is detected in <1% of cells and ring-ish, so the
+    estimators legitimately differ -- the viewer exposes `mode` so users can explore:
+
+      'footprint'  equal-weight centroid of marker+ bins  -> geometric centre of detection
+      'expression' binned-mean centre of mass             -> centre of mass of the signal
+      'domain'     centroid of bins >= frac*peak, peak = `peak_pctile` of per-bin means
+                   -> the FISH-calibrated spatial-domain gate of retina-spatial-scrna-analysis
+                      (item2_fishcalib_perbin_domains: frac=0.5, peak=95th pctile) -- robust
+      'peak'       centroid of the top bins (>= peak_pctile of per-bin means) -> the hot spot
+
+    All modes bin on the (NT,DV) score grid (x=NT, y=DV) and gate on bins with >= min_cells, so
+    the landmark sits on bins the displayed map actually shows. `expr` is the marker's per-cell
+    value (log-norm); footprint uses only presence (expr>0). `smooth_sigma` Gaussian-smooths the
+    per-bin mean the SAME way the displayed binned map does -- pass the dataset's smooth_sigma so
+    the expression/domain/peak centre lands on the bright core the user actually SEES (computing
+    on the raw, unsmoothed means leaves the diamond a few bins off the smoothed blob)."""
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float); expr = np.asarray(expr, dtype=float)
+    if mode == 'footprint':
+        return marker_footprint_center(dv, nt, expr > 0, bin_size=bin_size, min_cells=min_cells)
+    fin = np.isfinite(dv) & np.isfinite(nt) & np.isfinite(expr)
+    if not fin.any():
+        return None
+    nb = int(bin_size)
+    esum, ne, de = np.histogram2d(nt[fin], dv[fin], bins=nb, weights=np.clip(expr[fin], 0, None))
+    cnt, _, _ = np.histogram2d(nt[fin], dv[fin], bins=[ne, de])
+    valid = cnt >= max(1, int(min_cells))
+    with np.errstate(invalid='ignore', divide='ignore'):
+        bm = np.where(valid, esum / np.maximum(cnt, 1.0), np.nan)
+    if smooth_sigma and smooth_sigma > 0:
+        # Mirror _binned_mean: fill invalid with 0, smooth, then re-mask -> the displayed field.
+        from scipy.ndimage import gaussian_filter
+        bm = gaussian_filter(np.where(valid, np.nan_to_num(bm), 0.0), sigma=float(smooth_sigma))
+        bm = np.where(valid, bm, np.nan)
+    finite_pos = bm[np.isfinite(bm) & (bm > 0)]
+    if finite_pos.size == 0:
+        return None
+    ntc = (ne[:-1] + ne[1:]) / 2; dvc = (de[:-1] + de[1:]) / 2
+    NTc, DVc = np.meshgrid(ntc, dvc, indexing='ij')
+    if mode == 'expression':
+        w = np.where(np.isfinite(bm), np.clip(bm, 0.0, None), 0.0)
+    else:  # 'domain' or 'peak': threshold on the robust (percentile) peak of the bin means
+        peak = float(np.percentile(finite_pos, float(peak_pctile)))
+        thr = frac * peak if mode == 'domain' else peak
+        w = (np.isfinite(bm) & (bm >= thr)).astype(float)
+    if w.sum() <= 0:
+        return None
+    return float((DVc * w).sum() / w.sum()), float((NTc * w).sum() / w.sum())
+
+
 def has_scores(obs_columns):
     """True iff both topographic score columns are present (so the projection applies).
 
@@ -217,3 +334,18 @@ def has_scores(obs_columns):
     """
     cols = set(obs_columns) if obs_columns is not None else set()
     return DV_COL in cols and NT_COL in cols
+
+
+if __name__ == "__main__":
+    # ponytail: one runnable check for the sphere geometry (no test framework in this repo).
+    # Run with `python -m utils.wholemount`.
+    dv = np.array([0.0, 1.0, -1.0, 0.5, -0.7, 0.0])
+    nt = np.array([0.0, 0.8, 0.3, -0.6, -0.2, 1.0])
+    x, y, z = sphere_coords(dv, nt)
+    assert np.allclose(x**2 + y**2 + z**2, 1.0), "points must lie on the unit sphere"
+    assert np.allclose([x[0], y[0], z[0]], [0, 0, 1]), "HAA pole (score origin) -> +z top"
+    xn, yn, _ = sphere_coords(np.array([0.0]), np.array([1.0]))   # pure nasal (+NT)
+    assert xn[0] > 0 and abs(yn[0]) < 1e-9, "nasal -> +x (matches flower orientation)"
+    xd, yd, _ = sphere_coords(np.array([1.0]), np.array([0.0]))   # pure dorsal (+DV)
+    assert yd[0] > 0 and abs(xd[0]) < 1e-9, "dorsal -> +y (matches flower orientation)"
+    print("wholemount.sphere_coords self-check OK")

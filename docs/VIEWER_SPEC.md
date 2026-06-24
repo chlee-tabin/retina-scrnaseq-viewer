@@ -139,20 +139,32 @@ v=2, dataset, embedding, color, gene, mode, plot_type,
 compare_genes, gene2, compare_shared_scale,                       # two-gene
 custom_x, custom_y, bins, percentile, enable_binning,             # map binning
   enable_smoothing, bin_stat,
-custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount flower
+custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount flower / sphere (3D)
   wm_cuts, wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode,
   wm_gap_frac, wm_pole,
+ng_layers, ng_frac, ng_dorsal, ng_ventral,                        # uncaptured-nasal cap (flower + sphere)
+haa_mode,                                                         # HAA pointer mode (off/footprint/expression/domain/peak)
+sphere_cam,                                                       # 3D-sphere viewpoint (camera; both panels)
 group_by, group_split, group_gene, group_style, gene_module,      # group view
   group_positive_only, group_replicate, group_value_source, group_meta
 ```
+
+Added in v0.221 (additive, backward compatible — pre-v0.221 links omit these keys
+and restore the R2.5 cap defaults + the default face-on camera): `ng_layers`,
+`ng_frac`, `ng_dorsal`, `ng_ventral` (the uncaptured-nasal-cap extent / wedge,
+written for any non-raw whole-mount view); `haa_mode` (the HAA-pointer definition,
+written for any custom-embedding view); and `sphere_cam` (the 3D camera, written
+only in sphere mode when the user has rotated; one camera covers both compare panels).
 
 **Restoration ownership** (each control is written by exactly one restore-capable
 callback, and each reads the same URL state):
 
 - `callbacks/url_callbacks.initialize_from_url` → dataset + global controls
   (mode, bins, percentile, enable_binning, enable_smoothing, bin_stat, plot_type,
-  compare_genes, gene2, compare_shared_scale). Fires on initial load
-  (`prevent_initial_call='initial_duplicate'`) so a pasted link works.
+  compare_genes, gene2, compare_shared_scale, the uncaptured-nasal-cap controls
+  ng_layers/ng_frac/ng_dorsal/ng_ventral, and the sphere camera `sphere_cam`).
+  Fires on initial load (`prevent_initial_call='initial_duplicate'`) so a pasted
+  link works.
 - `app.update_data` → embedding, colour, gene (triggered by the restored dataset).
 - `main_callbacks.update_custom_embedding_controls` → custom_x / custom_y.
 - `main_callbacks.populate_group_controls` → all group controls.
