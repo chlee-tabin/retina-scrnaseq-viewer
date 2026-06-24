@@ -122,6 +122,7 @@ def initialize_from_url(search, pathname):
      State('percentile-slider', 'value'),
      State('enable-binning', 'value'),
      State('enable-smoothing', 'value'),
+     State('smooth-sigma-slider', 'value'),
      State('bin-stat', 'value'),
      State('compare-genes', 'value'),
      State('gene-select-2', 'value'),
@@ -164,7 +165,7 @@ def initialize_from_url(search, pathname):
 @log_callback_info
 def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               custom_x, custom_y, custom_projection, bin_number, percentile, enable_binning,
-              enable_smoothing, bin_stat, compare_genes, gene2, compare_shared_scale,
+              enable_smoothing, smooth_sigma, bin_stat, compare_genes, gene2, compare_shared_scale,
               plot_type, group_gene, group_by, group_split, group_style,
               gene_module, group_positive_only, group_replicate,
               wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
@@ -178,13 +179,19 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
     # Share-state schema v2 (see docs/VIEWER_SPEC.md). Only the keys relevant to the
     # current view are written, so URLs stay lean; absent keys restore to defaults.
     state_dict = {
-        'v': 2,
+        'v': 3,  # bumped from 2 when the smoothing slider landed (adds smooth_sigma)
         'dataset': dataset,
         'embedding': embedding,
         'color': color_by,
         'mode': viz_mode,
         'plot_type': plot_type,
     }
+    # Smoothing-slider sigma (v0.31+), written for EVERY new link (not just the spatial
+    # view) so a recipient who later switches to the map gets the sharer's strength.
+    # A pre-slider link is identified by its schema version (v<3), so resolve_smooth_sigma
+    # uses the OLD per-dataset default only for genuinely old links -- this stays correct
+    # even if a future change makes this write conditional, unlike a key-absence test.
+    state_dict['smooth_sigma'] = smooth_sigma
 
     if color_by == 'gene_expression' and gene:
         state_dict['gene'] = gene

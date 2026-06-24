@@ -290,7 +290,7 @@ def haa_center(dv, nt, expr, mode='domain', *, bin_size=50, min_cells=5, frac=0.
     All modes bin on the (NT,DV) score grid (x=NT, y=DV) and gate on bins with >= min_cells, so
     the landmark sits on bins the displayed map actually shows. `expr` is the marker's per-cell
     value (log-norm); footprint uses only presence (expr>0). `smooth_sigma` Gaussian-smooths the
-    per-bin mean the SAME way the displayed binned map does -- pass the dataset's smooth_sigma so
+    per-bin mean the SAME way the displayed binned map does -- pass the active (slider) smooth_sigma so
     the expression/domain/peak centre lands on the bright core the user actually SEES (computing
     on the raw, unsmoothed means leaves the diamond a few bins off the smoothed blob)."""
     dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float); expr = np.asarray(expr, dtype=float)

@@ -36,7 +36,8 @@ Two top-level views, switched by **View** (`plot-type`):
 | `custom-x-select` / `custom-y-select` | map | Axes for the custom embedding |
 | `enable-binning` | map (custom) | Binned "metacell" spatial view |
 | `bin-stat` | map (custom) | Bin colour: `mean` expression vs `frac_pos` (% positive) |
-| `enable-smoothing` | map (custom) | Gaussian smoothing of the binned map |
+| `enable-smoothing` | map (custom) | Gaussian smoothing of the binned map (on/off gate) |
+| `smooth-sigma-slider` | map (custom) | Smoothing strength σ (0–4, bin units); per-dataset config = default |
 | `bin-number-slider` | map (custom) | Number of bins (2–120) |
 | `percentile-slider` | map (custom) | Colour-scale percentile cutoff |
 | `color-select` | map | Gene expression or an obs column |
@@ -129,13 +130,13 @@ convention). The
 x-axis follows `annotation_order`. A default module is preselected so the dot plot
 renders immediately when chosen.
 
-## Share state (v2)
+## Share state (v3)
 
 Base64-encoded JSON carried in `?state=`. Keys (only those relevant to the current
 view are written; absent keys restore to defaults):
 
 ```
-v=2, dataset, embedding, color, gene, mode, plot_type,
+v=3, dataset, embedding, color, gene, mode, plot_type, smooth_sigma,
 compare_genes, gene2, compare_shared_scale,                       # two-gene
 custom_x, custom_y, bins, percentile, enable_binning,             # map binning
   enable_smoothing, bin_stat,
@@ -156,6 +157,19 @@ written for any non-raw whole-mount view); `haa_mode` (the HAA-pointer definitio
 written for any custom-embedding view); and `sphere_cam` (the 3D camera, written
 only in sphere mode when the user has rotated; one camera covers both compare panels).
 
+Added in v0.31 — share schema bumped **v2 → v3** (additive, backward compatible):
+`smooth_sigma`, the Gaussian smoothing strength, now a live slider rather than a fixed
+per-dataset config value (the config value is just the slider's default on dataset
+load). Written for every new link (top-level, not only the spatial view) so a recipient
+who later switches to the map gets the sharer's strength. A **pre-slider link is
+identified by its schema version** (`v < 3`): for those, `update_data` restores the
+per-dataset default that was in effect then (`LEGACY_SMOOTH_SIGMA` in
+`utils/smoothing.py` — `human_rpc` **0.5** (the old near-no-op default, since corrected
+to 2.0), `chick_rpc`/`mouse_rpc`/`mouse_rpc_legacy` 2.0, `chick_full` 1.5), so the
+shared view is reproduced exactly. Identifying old links by version (not by a missing
+key) stays correct even if a future change makes the `smooth_sigma` write conditional.
+An out-of-range σ from a hand-edited URL is clamped to the slider's [0, 4] domain.
+
 **Restoration ownership** (each control is written by exactly one restore-capable
 callback, and each reads the same URL state):
 
@@ -165,7 +179,9 @@ callback, and each reads the same URL state):
   ng_layers/ng_frac/ng_dorsal/ng_ventral, and the sphere camera `sphere_cam`).
   Fires on initial load (`prevent_initial_call='initial_duplicate'`) so a pasted
   link works.
-- `app.update_data` → embedding, colour, gene (triggered by the restored dataset).
+- `app.update_data` → embedding, colour, gene, and `smooth-sigma-slider` (triggered
+  by the restored dataset; the slider's sigma is resolved URL-value > legacy default
+  > config default by `resolve_smooth_sigma`).
 - `main_callbacks.update_custom_embedding_controls` → custom_x / custom_y.
 - `main_callbacks.populate_group_controls` → all group controls.
 

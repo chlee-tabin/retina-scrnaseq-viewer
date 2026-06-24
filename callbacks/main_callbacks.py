@@ -276,7 +276,10 @@ def _nasal_gap_params(cfg, layers, frac, dorsal, ventral):
      Input('nasal-gap-dorsal', 'value'),
      Input('nasal-gap-ventral', 'value'),
      # HAA-pointer mode (off / footprint / expression / domain / peak), all projections.
-     Input('haa-mode', 'value')],
+     Input('haa-mode', 'value'),
+     # Gaussian-smoothing strength (sigma). Per-dataset default set by update_data;
+     # gated to 0 when the enable-smoothing toggle is off.
+     Input('smooth-sigma-slider', 'value')],
     State('sphere-camera-store', 'data'),
     prevent_initial_call=True
 )
@@ -291,6 +294,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 group_value_source, group_meta,
                 wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
                 ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode,
+                smooth_sigma_ctrl,
                 sphere_cam):
     logger.debug("update_plot called with parameters:")
 
@@ -415,7 +419,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         # The HAA landmark must be computed on the SAME binned field the user sees, or the
         # diamond lands on a different grid/smoothing than the displayed map: track the active
         # bin count (bin_number) and the effective smoothing (off when the toggle is off).
-        haa_smooth = float(data_store.get('smooth_sigma', 0) or 0) if _on(enable_smoothing) else 0.0
+        haa_smooth = float(smooth_sigma_ctrl or 0) if _on(enable_smoothing) else 0.0
         if embedding == 'custom_embedding':
             if custom_projection in ('flower', 'sphere'):
                 # Whole-mount reprojection of the DV/NT topographic scores: the flat "flower"
@@ -497,7 +501,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     "Check the name/casing."
                 )
             smooth_on = _on(enable_smoothing)
-            smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+            smooth_sigma = float(smooth_sigma_ctrl or 0) if smooth_on else 0
             v1, v2 = _gene_vector(adata, gene), _gene_vector(adata, gene2)
             mc = data_store.get('min_cells_per_bin', 1)
             cf = data_store.get('color_floor', 0.05)
@@ -567,7 +571,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         if sphere_xyz is not None:
             if binning_on and not treat_as_categorical and color_series is not None:
                 smooth_on = _on(enable_smoothing)
-                smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+                smooth_sigma = float(smooth_sigma_ctrl or 0) if smooth_on else 0
                 base = gene if color_by == 'gene_expression' else str(color_by)
                 cl = f"{base} (% detected)" if bin_stat == 'frac_pos' else base
                 return _apply_sphere_camera(create_sphere_binned_figure(
@@ -601,7 +605,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         # all other embeddings always use the per-cell scatter (F1).
         if binning_on:
             smooth_on = _on(enable_smoothing)
-            smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
+            smooth_sigma = float(smooth_sigma_ctrl or 0) if smooth_on else 0
             min_cells = data_store.get('min_cells_per_bin', 1)
             if custom_projection == 'flower' and not treat_as_categorical and color_series is not None:
                 # Faithful whole-mount: bin in DV/NT SCORE space, warp, drop strays --

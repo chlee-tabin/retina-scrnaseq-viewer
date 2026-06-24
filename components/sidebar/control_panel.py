@@ -316,6 +316,17 @@ def create_control_panel():
                                     value=['enabled'],  # default: smoothed, matching the paper's spatial images
                                     className="mb-2"
                                 ),
+                                # Smoothing strength (Gaussian sigma, in bin units). The per-dataset
+                                # value in datasets_config.yml is just the default the slider opens on;
+                                # update_data sets it on dataset load (and a shared link overrides it).
+                                # ponytail: 0 also = off, but the checkbox above is the real on/off gate.
+                                html.Label("Smoothing sigma:", className="mt-2"),
+                                dcc.Slider(
+                                    id='smooth-sigma-slider',
+                                    min=0, max=4, step=0.1, value=2.0,
+                                    marks={i: str(i) for i in range(5)},
+                                    tooltip={'placement': 'bottom', 'always_visible': False},
+                                ),
                                 html.Label("Number of bins:", className="mt-2"),
                                 dcc.Slider(
                                     id='bin-number-slider',
