@@ -280,7 +280,8 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
                 "Draw at least one ROI polygon (≥ 3 vertices) on the map."), ""
 
         recap = create_recap_figure(xs, ys, labels, sel_info['mode'],
-                                    x_label=custom_x, y_label=custom_y)
+                                    x_label=custom_x, y_label=custom_y,
+                                    foreground_label=sel_info.get('solo', 'A'))
         min_cells = int(min_cells or 50)
 
         try:
@@ -304,7 +305,8 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         # NaN padj/LFC (low-count genes) is not valid JSON for a dcc.Store -> None.
         records = res.astype(object).where(pd.notnull(res), None).to_dict('records')
         sig = _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, projection)
-        return {'records': records, 'sig': sig}, recap, _status(info, min_cells)
+        return ({'records': records, 'sig': sig, 'solo': info.get('solo', 'A')},
+                recap, _status(info, min_cells))
     except Exception as e:
         logger.error(f"run_deg_cb failed: {e}", exc_info=True)
         return (None, _message_figure("Internal error computing DEG — see server logs."),
@@ -312,13 +314,17 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
 
 
 def _status(info, min_cells):
-    mode = "ROI A vs. rest" if info['mode'] == 'A_vs_rest' else "ROI A vs. ROI B"
-    overlap = (f" · {info['n_overlap']:,} overlapping cells → smaller ROI"
-               if info.get('n_overlap') else "")
+    if info['mode'] == 'A_vs_rest':
+        solo = info.get('solo', 'A')            # name the drawn region by the button used
+        mode, fg, bg, overlap = f"ROI {solo} vs. rest", f"ROI {solo}", "rest", ""
+    else:
+        mode, fg, bg = "ROI A vs. ROI B", "A", "B"
+        overlap = (f" · {info['n_overlap']:,} overlapping cells → smaller ROI"
+                   if info.get('n_overlap') else "")
     return dbc.Alert([
         html.B(f"{mode}. "),
-        f"{info['n_A']:,} A / {info['n_B']:,} B cells{overlap}. ",
-        f"Pseudobulks ≥ {min_cells} cells: {info['n_pb_A']} A / {info['n_pb_B']} B. ",
+        f"{info['n_A']:,} {fg} / {info['n_B']:,} {bg} cells{overlap}. ",
+        f"Pseudobulks ≥ {min_cells} cells: {info['n_pb_A']} {fg} / {info['n_pb_B']} {bg}. ",
         f"Design {info['design']} ({info['design_reason']}). ",
         f"{info['n_genes_tested']:,} genes tested.",
     ], color="info", className="py-2 mb-1")
@@ -357,7 +363,8 @@ def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells
             res[c] = pd.to_numeric(res[c], errors='coerce')  # None (from the store) -> NaN
     lfc_t = float(lfc_thresh) if lfc_thresh not in (None, '') else 1.0
     padj_t = float(padj_thresh) if padj_thresh not in (None, '') else 0.05
-    fig = create_volcano_figure(res, lfc_thresh=lfc_t, padj_thresh=padj_t)
+    fig = create_volcano_figure(res, lfc_thresh=lfc_t, padj_thresh=padj_t,
+                                foreground_label=stored.get('solo', 'A'))
 
     # Keep the table values NUMERIC so DataTable's native sort orders numerically rather than
     # lexicographically; show ~3 significant figures via the column format instead of pre-

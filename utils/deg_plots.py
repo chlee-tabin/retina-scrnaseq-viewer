@@ -12,9 +12,11 @@ import plotly.graph_objects as go
 from utils.plotting import create_scatter_plot, _message_figure
 
 
-def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subtitle=None):
+def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subtitle=None,
+                          foreground_label='A'):
     """Volcano from a results frame with gene / log2FoldChange / padj columns.
-    Positive log2FC = enriched in ROI A."""
+    Positive log2FC = enriched in the drawn ('A'-side) region -- named by `foreground_label`
+    ('A' normally, 'B' for a B-only draw)."""
     res = res.copy()
     for c in ('padj', 'log2FoldChange'):
         res[c] = pd.to_numeric(res[c], errors='coerce')
@@ -52,7 +54,7 @@ def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subti
     if subtitle is None:
         subtitle = (f"|log2FC| &gt; {lfc_thresh:g} · adj p &lt; {padj_thresh:g} "
                     f"· {int(sig.sum()):,} significant")
-    title = "Volcano — positive log2FC = enriched in ROI A"
+    title = f"Volcano — positive log2FC = enriched in ROI {foreground_label}"
     if subtitle:
         title += f"<br><sub>{subtitle}</sub>"
     fig.update_layout(
@@ -62,11 +64,15 @@ def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subti
     return fig
 
 
-def create_recap_figure(x, y, labels, mode, x_label='NT.Score', y_label='DV.Score'):
+def create_recap_figure(x, y, labels, mode, x_label='NT.Score', y_label='DV.Score',
+                        foreground_label='A'):
     """Scatter coloured by the resolved ROI assignment (A / B-or-rest / unused) -- the
-    disjoint selection that was actually contrasted, in the embedding's axes."""
+    disjoint selection that was actually contrasted, in the embedding's axes. `foreground_label`
+    names the drawn 'A'-side region: 'A' normally, 'B' for a B-only draw so it shows + colours
+    as ROI B (matching the orange polygon on the map) rather than being mislabelled ROI A."""
+    fg = f'ROI {foreground_label}'
     other = 'rest' if mode == 'A_vs_rest' else 'ROI B'
-    disp = np.where(labels == 'A', 'ROI A', np.where(labels == 'B', other, '(unused)'))
+    disp = np.where(labels == 'A', fg, np.where(labels == 'B', other, '(unused)'))
     df = pd.DataFrame({'x': np.asarray(x), 'y': np.asarray(y), 'color': disp})
     cmap = {'ROI A': '#2c7fb8', 'ROI B': '#d95f0e', 'rest': '#bdbdbd', '(unused)': '#e8e8e8'}
     order = ['(unused)', 'rest', 'ROI B', 'ROI A']   # ROIs drawn last (on top)

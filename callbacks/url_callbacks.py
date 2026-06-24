@@ -96,10 +96,14 @@ def initialize_from_url(search, pathname):
         state.get('ng_ventral', no_update),
         state.get('haa_mode', no_update),
         state.get('sphere_cam', no_update),
-        state.get('roi', no_update),         # restore ROI polygons (drawn once the map renders)
-        state.get('volcano_lfc', no_update), # absent -> keep the layout default (1.0)
-        state.get('volcano_padj', no_update),# absent -> keep the layout default (0.05)
-        state.get('deg_min_cells', no_update),# absent -> keep the layout default (50)
+        # share_url OMITS these ROI-DEG keys when empty/default, so an absent key in a shared
+        # link means "the sharer had no ROI / defaults" -> restore the DEFAULT (clear / 1.0 /
+        # 0.05 / 50), not no_update, so a link faithfully reproduces the shared state instead of
+        # leaving whatever the recipient already had. (Reached only when a ?state= is present.)
+        state.get('roi', {'A': [], 'B': []}),  # absent -> clear any existing ROI
+        state.get('volcano_lfc', 1.0),
+        state.get('volcano_padj', 0.05),
+        state.get('deg_min_cells', 50),
     )
 
 @callback(

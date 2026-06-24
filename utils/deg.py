@@ -78,10 +78,14 @@ def resolve_rois(idx_a, idx_b, n_obs):
         labels[b] = 'B'
         info = {'mode': 'A_vs_B', 'n_overlap': int(overlap.sum())}
     elif na or nb:
+        # One ROI vs the rest. Keep the drawn region as the 'A' side so the DE direction is
+        # stable (positive log2FC = enriched in the drawn region), but record which button the
+        # user actually used ('solo') so the recap/status/volcano name + colour it correctly --
+        # otherwise a B-only draw is reported as "ROI A".
         roi = a if na else b
         labels[roi] = 'A'
         labels[~roi] = 'B'   # B == the rest
-        info = {'mode': 'A_vs_rest', 'n_overlap': 0}
+        info = {'mode': 'A_vs_rest', 'n_overlap': 0, 'solo': 'A' if na else 'B'}
     else:
         info = {'mode': None, 'n_overlap': 0}
 
