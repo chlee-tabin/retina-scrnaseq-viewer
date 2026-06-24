@@ -210,6 +210,21 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
     return P
 
 
+def _nasal_gap_params(cfg, layers, frac, dorsal, ventral):
+    """Effective uncaptured-nasal-band params for the sphere: None unless the dataset
+    configures `nasal_gap` (chick only -> human/mouse never show a band), else the live
+    control values (falling back to the config / R2.5 defaults). layers=0 -> the figure
+    draws nothing (the band's off switch via the Reach slider)."""
+    if not cfg:
+        return None
+    return {
+        'layers': int(layers if layers is not None else cfg.get('layers', 2)),
+        'frac': float(frac if frac is not None else cfg.get('frac', 0.13)),
+        'dorsal_deg': float(dorsal if dorsal is not None else 45.0),
+        'ventral_deg': float(ventral if ventral is not None else 55.0),
+    }
+
+
 @callback(
     Output('main-plot', 'figure', allow_duplicate=True),
     [Input('data-store', 'data'),
@@ -252,7 +267,13 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
      Input('wm-pow', 'value'),
      Input('wm-gap-mode', 'value'),
      Input('wm-gap-frac', 'value'),
-     Input('wm-pole', 'value')],
+     Input('wm-pole', 'value'),
+     # Exploratory uncaptured-nasal-cap controls (sphere only): radial reach (layers / depth)
+     # and the angular arc (dorsal / ventral reach) of the band beyond the nasal rim.
+     Input('nasal-gap-layers', 'value'),
+     Input('nasal-gap-frac', 'value'),
+     Input('nasal-gap-dorsal', 'value'),
+     Input('nasal-gap-ventral', 'value')],
     State('sphere-camera-store', 'data'),
     prevent_initial_call=True
 )
@@ -266,6 +287,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
                 group_value_source, group_meta,
                 wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
+                ng_layers, ng_frac, ng_dorsal, ng_ventral,
                 sphere_cam):
     logger.debug("update_plot called with parameters:")
 
@@ -386,6 +408,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         proj_params = None   # whole-mount transform params (None unless the flower view)
         sphere_xyz = None    # (x, y, z) on the unit sphere when the 3D projection is active
         haa_xyz = None       # HAA landmark position on the sphere (dataset-specific marker)
+        nasal_gap_eff = None # exploratory uncaptured-nasal band params (sphere + chick only)
         if embedding == 'custom_embedding':
             if custom_projection in ('flower', 'sphere'):
                 # Whole-mount reprojection of the DV/NT topographic scores: the flat "flower"
@@ -411,6 +434,9 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 nt_cells = adata.obs[wholemount.NT_COL].to_numpy()
                 proj_params = {**proj_params,
                                **wholemount.compute_scale_fit(dv_cells, nt_cells, **proj_params)}
+                # Uncaptured-nasal band params (flower AND sphere; chick-only via the config).
+                nasal_gap_eff = _nasal_gap_params(data_store.get('nasal_gap'),
+                                                  ng_layers, ng_frac, ng_dorsal, ng_ventral)
                 if custom_projection == 'sphere':
                     # Native 3D geometry: reuse the flower's basis but place cells on the
                     # unit sphere. Built below (a 3D figure) once the colour series resolves;
@@ -538,6 +564,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     color_floor=data_store.get('color_floor', 0.05),
                     bin_stat=(bin_stat or 'mean'), color_label=cl, params=proj_params,
                     haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
+                    nasal_gap=nasal_gap_eff,
                 ), sphere_cam)
             s_cmap, s_corder = _annotation_style(data_store, color_by)
             return _apply_sphere_camera(create_sphere_figure(
@@ -546,6 +573,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 treat_as_categorical=treat_as_categorical,
                 color_map=s_cmap, category_order=s_corder,
                 haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
+                dv=dv_cells, nt=nt_cells, params=proj_params,
+                nasal_gap=nasal_gap_eff,
             ), sphere_cam)
 
         # Create DataFrame for plotting
@@ -578,6 +607,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     bin_stat=(bin_stat or 'mean'),
                     color_label=cl,
                     params=proj_params,
+                    nasal_gap=nasal_gap_eff,
                 )
             else:
                 fig = create_binned_plot(
@@ -714,7 +744,11 @@ def toggle_wholemount_advanced(custom_projection):
      Output('wm-dewarp', 'value', allow_duplicate=True),
      Output('wm-pow', 'value', allow_duplicate=True),
      Output('wm-gap-mode', 'value', allow_duplicate=True),
-     Output('wm-gap-frac', 'value', allow_duplicate=True)],
+     Output('wm-gap-frac', 'value', allow_duplicate=True),
+     Output('nasal-gap-layers', 'value', allow_duplicate=True),
+     Output('nasal-gap-frac', 'value', allow_duplicate=True),
+     Output('nasal-gap-dorsal', 'value', allow_duplicate=True),
+     Output('nasal-gap-ventral', 'value', allow_duplicate=True)],
     Input('wm-reset', 'n_clicks'),
     prevent_initial_call=True,
 )
@@ -722,7 +756,8 @@ def reset_wholemount_params(n_clicks):
     # Restore every Advanced-projection control to its Fig R2.5 default (the values baked into
     # control_panel.py / wholemount.LOCKED_PARAMS), so the complicated flower/sphere knobs can
     # be returned to the published preset in one click. Keep these in sync with control_panel.
-    return 82, 64, 1.0, 1.0, 4, ['enabled'], 'origin', 'arcsin', 1.6, 'deficit', 0.5
+    # Trailing four: the uncaptured-nasal band (layers / depth / dorsal° / ventral°).
+    return 82, 64, 1.0, 1.0, 4, ['enabled'], 'origin', 'arcsin', 1.6, 'deficit', 0.5, 2, 0.13, 45, 55
 
 
 @callback(
@@ -737,6 +772,21 @@ def toggle_wholemount_relief(custom_projection):
     if custom_projection == 'sphere':
         return {'display': 'none'}
     return {'display': 'block'}
+
+
+@callback(
+    Output('nasal-gap-controls', 'style'),
+    [Input('custom-projection', 'value'),
+     Input('data-store', 'data')]
+)
+def toggle_nasal_gap_controls(custom_projection, data_store):
+    # The uncaptured-nasal band applies to BOTH whole-mount views -- the flat flower (the Fig
+    # R2.5 hatched cap, its origin) and the sphere (the 3D echo) -- and only for datasets that
+    # configure `nasal_gap` (chick under-samples the most-nasal retina). Show its controls only
+    # then; raw axes / human / mouse never see them. Mirrors the band's own gating.
+    if custom_projection in ('flower', 'sphere') and (data_store or {}).get('nasal_gap'):
+        return {'display': 'block'}
+    return {'display': 'none'}
 
 
 # ---- F2: toggle map vs. expression-by-group control panels ----

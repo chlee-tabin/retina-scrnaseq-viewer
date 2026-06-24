@@ -521,7 +521,7 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
 def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
                                     smooth_sigma=0, min_cells=1, color_floor=0.05,
                                     bin_stat='mean', color_label='expression',
-                                    params=None, n_color_bins=24):
+                                    params=None, n_color_bins=24, nasal_gap=None):
     """Whole-mount ("flower") binned map, faithful to the reviewer figure.
 
     Unlike a histogram of the warped per-cell coordinates (which scatters isolated
@@ -561,6 +561,14 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     fig = go.Figure()
     for t in traces:
         fig.add_trace(t)
+    if nasal_gap:   # hatched uncaptured-nasal tiles (Fig R2.5 ghost cap), now controllable
+        ov = _missing_nasal_overlay_flat(dv, nt, P, frac=nasal_gap.get('frac', 0),
+                                         layers=int(nasal_gap.get('layers', 2)),
+                                         dorsal_deg=nasal_gap.get('dorsal_deg', 45.0),
+                                         ventral_deg=nasal_gap.get('ventral_deg', 54.46),
+                                         bin_size=bin_size, min_cells=min_cells)
+        for t in ov:
+            fig.add_trace(t)
     fig.update_layout(
         title='Whole-mount projection (score-space binned)',
         plot_bgcolor='white', height=800, showlegend=False,
@@ -774,9 +782,145 @@ def _haa_caption(fig, haa_xyz, haa_marker):
     return fig
 
 
+def _nasal_edge_bins(dv, nt, P, *, layers, dorsal_deg, ventral_deg, bin_size, min_cells):
+    """Shared selection for the uncaptured-nasal overlay (flat flower AND sphere): the nasal
+    outer-edge bins within the nasal wedge, plus each one's radial layer count.
+
+    Mirrors flower_reproject.render_grid's `ghost_polys` block on a COUNT grid (so the band is
+    anatomical / gene-independent, like the figure): each populated bin with NO populated
+    neighbour one bin further nasal (i+1, since nasal = +NT) whose CENTRE falls in the nasal
+    wedge (cx>0; dorsal <= dorsal_deg; ventral <= ventral_deg, tested in the un-stretched
+    azimuthal frame cx,cy = rho*(cos,sin)(theta)). Returns (nt_e, dv_lo, dv_hi, L) arrays --
+    the two nasal-edge corners' scores per bin (nt = nt_edges[i+1]; the two DV corners) and the
+    layer count L = layers (+1 ventro-nasally) -- or None if nothing qualifies.
+    """
+    dv = np.asarray(dv, dtype=float); nt = np.asarray(nt, dtype=float)
+    m = np.isfinite(dv) & np.isfinite(nt)
+    dv, nt = dv[m], nt[m]
+    if dv.size == 0:
+        return None
+    nb = int(bin_size)
+    # Count grid on the score axes (x=NT, y=DV) -- SAME edges as the binned map
+    # (_binned_mean histograms (nt, dv)); a bin is "captured" at >= min_cells, so the band's
+    # inner edge meets the drawn cap's nasal rim. i indexes NT (nasal = +i), j indexes DV.
+    counts, nt_edges, dv_edges = np.histogram2d(nt, dv, bins=nb)
+    valid = counts >= max(1, int(min_cells))
+    cand = [(i, j) for i in range(nb) for j in range(nb)
+            if valid[i, j] and not (i + 1 < nb and valid[i + 1, j])]
+    if not cand:
+        return None
+    ci = np.array([c[0] for c in cand]); cj = np.array([c[1] for c in cand])
+    _, _, dc = wm.flower_transform((dv_edges[cj] + dv_edges[cj + 1]) / 2,
+                                   (nt_edges[ci] + nt_edges[ci + 1]) / 2, **P)
+    rho_c = np.asarray(dc['rho']); th_c = np.asarray(dc['theta'])
+    cx = rho_c * np.cos(th_c); cy = rho_c * np.sin(th_c)
+    td = np.tan(np.radians(float(dorsal_deg)))    # R2.5: 45deg -> cy<=cx
+    tv = np.tan(np.radians(float(ventral_deg)))   # R2.5: ~54deg -> cy>=-1.4*cx
+    keep = (cx > 0) & (cy <= td * cx) & (cy >= -tv * cx)
+    if not keep.any():
+        return None
+    ci, cj, cy = ci[keep], cj[keep], cy[keep]
+    L = int(layers) + (cy < 0).astype(int)        # one extra radial layer ventro-nasally
+    return nt_edges[ci + 1], dv_edges[cj], dv_edges[cj + 1], L
+
+
+def _missing_nasal_overlay(dv, nt, params, *, frac, layers=2, dorsal_deg=45.0,
+                           ventral_deg=54.46, bin_size=50, min_cells=1):
+    """Exploratory "(missing) uncaptured most-nasal cap" band for the SPHERE -- the 3D echo of
+    the flat Fig R2.5 hatched missing-nasal tiles (flower_reproject.render_grid `ghost_polys`).
+
+    The chick RPC data under-samples the most-nasal retina; the flat flower draws that region
+    as hatched empty tiles extruded radially outward from the nasal outer edge. In the flower's
+    azimuthal-equidistant projection display radius = colatitude, so the flat "extrude outward
+    by f = 1 + frac*k" becomes "raise colatitude rho -> rho*f" here: the band sits just beyond
+    the cap rim on the nasal side, wrapping toward / past the equator. Plotly can't hatch a 3D
+    surface, so the band is a translucent grey Mesh3d + a grey outline with one diagonal per
+    tile (sparse "///"). `dorsal_deg`/`ventral_deg` set the angular reach (shrink to a sub-arc);
+    `layers` the radial reach (0 = off). Returns a list of traces (empty if nothing qualifies).
+    The flat-flower twin is _missing_nasal_overlay_flat; both share _nasal_edge_bins.
+    """
+    if not frac or frac <= 0 or layers <= 0:
+        return []
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    sel = _nasal_edge_bins(dv, nt, P, layers=layers, dorsal_deg=dorsal_deg,
+                           ventral_deg=ventral_deg, bin_size=bin_size, min_cells=min_cells)
+    if sel is None:
+        return []
+    nt_e, dv_lo, dv_hi, L = sel
+    _, _, d1 = wm.flower_transform(dv_lo, nt_e, **P)
+    _, _, d2 = wm.flower_transform(dv_hi, nt_e, **P)
+    rho1 = np.asarray(d1['rho']); th1 = np.asarray(d1['theta'])
+    rho2 = np.asarray(d2['rho']); th2 = np.asarray(d2['theta'])
+
+    def _xyz(rho, th):
+        rho = min(float(rho), np.pi)          # don't fold back past the far pole
+        s = np.sin(rho)
+        return s * np.cos(th), s * np.sin(th), np.cos(rho)
+
+    vx, vy, vz, ti, tj, tk = [], [], [], [], [], []
+    lx, ly, lz = [], [], []                   # outline + one diagonal per tile, None-separated
+    for n in range(len(L)):
+        for k in range(int(L[n])):
+            f0, f1 = 1.0 + frac * k, 1.0 + frac * (k + 1)
+            a = _xyz(rho1[n] * f0, th1[n]); b = _xyz(rho1[n] * f1, th1[n])
+            c = _xyz(rho2[n] * f1, th2[n]); d = _xyz(rho2[n] * f0, th2[n])
+            base = len(vx)
+            for p in (a, b, c, d):
+                vx.append(p[0]); vy.append(p[1]); vz.append(p[2])
+            ti += [base, base]; tj += [base + 1, base + 2]; tk += [base + 2, base + 3]
+            lx += [a[0], b[0], c[0], d[0], a[0], None, a[0], c[0], None]
+            ly += [a[1], b[1], c[1], d[1], a[1], None, a[1], c[1], None]
+            lz += [a[2], b[2], c[2], d[2], a[2], None, a[2], c[2], None]
+    if not vx:
+        return []
+    return [
+        go.Mesh3d(x=vx, y=vy, z=vz, i=ti, j=tj, k=tk, color='#9a9a9a', opacity=0.25,
+                  flatshading=True, hoverinfo='skip', showscale=False, name='uncaptured nasal',
+                  lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)),
+        go.Scatter3d(x=lx, y=ly, z=lz, mode='lines', line=dict(color='#5f5f5f', width=2),
+                     hoverinfo='skip', showlegend=False, name='uncaptured nasal'),
+    ]
+
+
+def _missing_nasal_overlay_flat(dv, nt, params, *, frac, layers=2, dorsal_deg=45.0,
+                                ventral_deg=54.46, bin_size=50, min_cells=1):
+    """The flat-flower (2D) twin of _missing_nasal_overlay: the hatched "missing/uncaptured"
+    most-nasal tiles of Fig R2.5 (flower_reproject `ghost_polys`), now controllable in the
+    viewer's flower view. Same edge+wedge selection (_nasal_edge_bins), but each nasal-edge
+    corner's DISPLAY position (X,Y -- stretch included, so the tiles sit on the drawn cap's
+    nasal rim) is extruded outward by f = 1 + frac*k. Plotly 2D CAN hatch, so the tiles use a
+    "/" fillpattern -- closest to the published figure. Returns a list of traces (empty if
+    nothing qualifies)."""
+    if not frac or frac <= 0 or layers <= 0:
+        return []
+    P = dict(wm.LOCKED_PARAMS) if params is None else dict(params)
+    sel = _nasal_edge_bins(dv, nt, P, layers=layers, dorsal_deg=dorsal_deg,
+                           ventral_deg=ventral_deg, bin_size=bin_size, min_cells=min_cells)
+    if sel is None:
+        return []
+    nt_e, dv_lo, dv_hi, L = sel
+    X1, Y1, _ = wm.flower_transform(dv_lo, nt_e, **P)
+    X2, Y2, _ = wm.flower_transform(dv_hi, nt_e, **P)
+    X1 = np.asarray(X1); Y1 = np.asarray(Y1); X2 = np.asarray(X2); Y2 = np.asarray(Y2)
+    px, py = [], []                            # None-separated quads (each fills independently)
+    for n in range(len(L)):
+        for k in range(int(L[n])):
+            f0, f1 = 1.0 + frac * k, 1.0 + frac * (k + 1)
+            px += [X1[n] * f0, X1[n] * f1, X2[n] * f1, X2[n] * f0, X1[n] * f0, None]
+            py += [Y1[n] * f0, Y1[n] * f1, Y2[n] * f1, Y2[n] * f0, Y1[n] * f0, None]
+    if not px:
+        return []
+    return [go.Scatter(
+        x=px, y=py, mode='lines', fill='toself', fillcolor='rgba(150,150,150,0.12)',
+        fillpattern=dict(shape='/', fgcolor='#6f6f6f', bgcolor='rgba(0,0,0,0)', size=6, solidity=0.3),
+        line=dict(color='#6f6f6f', width=1), hoverinfo='skip', showlegend=False,
+        name='uncaptured nasal')]
+
+
 def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
                          treat_as_categorical=False, color_map=None, category_order=None,
-                         haa_xyz=None, haa_marker=None):
+                         haa_xyz=None, haa_marker=None,
+                         dv=None, nt=None, params=None, nasal_gap=None):
     """3D spherical view of the whole-mount map: each cell a point on the unit sphere
     (utils.wholemount.sphere_coords), the native near-spherical geometry the flat flower
     projects. A faint reference sphere gives the cap its curvature; captured cells form a
@@ -813,6 +957,13 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
     fig.update_traces(marker=dict(size=2.5, opacity=0.85), selector=dict(type='scatter3d'))
     fig.add_trace(_reference_globe())
     fig.add_traces(_orientation_labels(x, y, z, haa_xyz=haa_xyz))
+    if nasal_gap and dv is not None and nt is not None:   # exploratory uncaptured-nasal band
+        ov = _missing_nasal_overlay(dv, nt, params, frac=nasal_gap.get('frac', 0),
+                                    layers=int(nasal_gap.get('layers', 2)),
+                                    dorsal_deg=nasal_gap.get('dorsal_deg', 45.0),
+                                    ventral_deg=nasal_gap.get('ventral_deg', 54.46))
+        if ov:
+            fig.add_traces(ov)
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D)'))
     return _haa_caption(fig, haa_xyz, haa_marker)
 
@@ -878,7 +1029,7 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
 def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
                                 smooth_sigma=0, min_cells=1, color_floor=0.05,
                                 bin_stat='mean', color_label='expression', params=None,
-                                haa_xyz=None, haa_marker=None):
+                                haa_xyz=None, haa_marker=None, nasal_gap=None):
     """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
 
     Identical score-grid binning to create_wholemount_binned_figure, but the grid VERTICES
@@ -909,6 +1060,14 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
     fig.add_trace(_reference_globe())
     csx, csy, csz = wm.sphere_coords(dv, nt, params=P)   # cell coords -> direction labels
     fig.add_traces(_orientation_labels(csx, csy, csz, haa_xyz=haa_xyz))
+    if nasal_gap:   # exploratory uncaptured-nasal band (same grid as the mesh above)
+        ov = _missing_nasal_overlay(dv, nt, P, frac=nasal_gap.get('frac', 0),
+                                    layers=int(nasal_gap.get('layers', 2)),
+                                    dorsal_deg=nasal_gap.get('dorsal_deg', 45.0),
+                                    ventral_deg=nasal_gap.get('ventral_deg', 54.46),
+                                    bin_size=bin_size, min_cells=min_cells)
+        if ov:
+            fig.add_traces(ov)
     for t in traces:
         fig.add_trace(t)
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D, score-space binned)'))

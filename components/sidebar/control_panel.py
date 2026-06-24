@@ -211,6 +211,46 @@ def create_control_panel():
                                                tooltip={'placement': 'bottom', 'always_visible': False}),
                                 ], id='wholemount-relief-controls'),
 
+                                # Exploratory uncaptured-nasal cap (flower AND sphere). The
+                                # chick RPC data under-samples the most-nasal retina; the flat
+                                # Fig R2.5 flower hatches that as a "missing/uncaptured" cap
+                                # (its origin), and the sphere echoes it as a grey band beyond
+                                # the nasal rim. Whole-mount + chick-only -> shown via
+                                # toggle_nasal_gap_controls.
+                                html.Div([
+                                    html.Hr(className="my-2"),
+                                    html.Label([
+                                        "Uncaptured-nasal cap",
+                                        _help('help-nasal-gap', "Uncaptured most-nasal cap",
+                                              "The chick RPC data under-samples the most-nasal "
+                                              "retina; the flat Fig R2.5 flower draws it as a "
+                                              "hatched 'missing/uncaptured' cap. These knobs "
+                                              "control it in BOTH whole-mount views: the flower "
+                                              "(hatched tiles, as published) and the sphere (the "
+                                              "3D echo — a grey band beyond the cap's nasal rim). "
+                                              "Reach = radial layers (0 = off); Depth = outward "
+                                              "step per layer; Dorsal/Ventral reach = which arc "
+                                              "of the nasal rim it covers. Render-only; adds no "
+                                              "data. Defaults 2 / 0.13 / 45° / 55° ≈ Fig R2.5."),
+                                    ], className="fw-semibold small"),
+                                    html.Label("Reach (radial layers):", className="mt-1 small"),
+                                    dcc.Slider(id='nasal-gap-layers', min=0, max=5, step=1, value=2,
+                                               marks={0: 'off', 2: '2', 5: '5'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                    html.Label("Depth per layer:", className="mt-2 small"),
+                                    dcc.Slider(id='nasal-gap-frac', min=0.04, max=0.30, step=0.01, value=0.13,
+                                               marks={0.04: '0.04', 0.13: '0.13', 0.3: '0.3'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                    html.Label("Dorsal reach (deg):", className="mt-2 small"),
+                                    dcc.Slider(id='nasal-gap-dorsal', min=0, max=90, step=5, value=45,
+                                               marks={0: '0', 45: '45', 90: '90'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                    html.Label("Ventral reach (deg):", className="mt-2 small"),
+                                    dcc.Slider(id='nasal-gap-ventral', min=0, max=90, step=5, value=55,
+                                               marks={0: '0', 55: '55', 90: '90'},
+                                               tooltip={'placement': 'bottom', 'always_visible': False}),
+                                ], id='nasal-gap-controls', style={'display': 'none'}, className="mb-1"),
+
                                 # Reset every Advanced-projection control to the Fig R2.5
                                 # default in one click (see reset_wholemount_params).
                                 dbc.Button("↺ Reset projection to Fig R2.5 default",
