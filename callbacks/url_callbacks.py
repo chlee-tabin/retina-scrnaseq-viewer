@@ -179,18 +179,18 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
     # Share-state schema v2 (see docs/VIEWER_SPEC.md). Only the keys relevant to the
     # current view are written, so URLs stay lean; absent keys restore to defaults.
     state_dict = {
-        'v': 2,
+        'v': 3,  # bumped from 2 when the smoothing slider landed (adds smooth_sigma)
         'dataset': dataset,
         'embedding': embedding,
         'color': color_by,
         'mode': viz_mode,
         'plot_type': plot_type,
     }
-    # Smoothing-slider sigma (v0.31+) is written for EVERY new link, not just the
-    # spatial-map view, so that "no smooth_sigma key" cleanly identifies a pre-slider
-    # link. resolve_smooth_sigma then falls back to the OLD per-dataset default only
-    # for genuinely old links -- never for a fresh link shared from a UMAP/group view
-    # whose recipient later switches to the spatial map. (Codex P2.)
+    # Smoothing-slider sigma (v0.31+), written for EVERY new link (not just the spatial
+    # view) so a recipient who later switches to the map gets the sharer's strength.
+    # A pre-slider link is identified by its schema version (v<3), so resolve_smooth_sigma
+    # uses the OLD per-dataset default only for genuinely old links -- this stays correct
+    # even if a future change makes this write conditional, unlike a key-absence test.
     state_dict['smooth_sigma'] = smooth_sigma
 
     if color_by == 'gene_expression' and gene:

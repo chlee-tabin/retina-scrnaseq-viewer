@@ -303,8 +303,9 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             'genes': list(adata.var_names),
             'column_types': column_types,  # Add column types to data store
             # Per-dataset spatial-binning params (mirror the analysis pipeline);
-            # used by the binned/smoothed view in main_callbacks.update_plot.
-            'smooth_sigma': dataset.get('smooth_sigma', 1.5),
+            # used by the binned/smoothed view in main_callbacks.update_plot. (smooth_sigma
+            # is NOT stored here -- it's now the smooth-sigma-slider's value, seeded from
+            # the same config by resolve_smooth_sigma below; the slider is the source of truth.)
             'min_cells_per_bin': dataset.get('min_cells_per_bin', 1),
             'color_floor': dataset.get('color_floor', 0.05),
             # Optional per-dataset gene sets for the "Expression by group" dot
