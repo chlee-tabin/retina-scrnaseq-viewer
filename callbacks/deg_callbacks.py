@@ -208,17 +208,21 @@ def _status(info, min_cells):
     [Output('volcano-plot', 'figure'),
      Output('deg-table', 'data'),
      Output('deg-table', 'columns')],
-    Input('deg-results-store', 'data'),
+    [Input('deg-results-store', 'data'),
+     Input('volcano-lfc-thresh', 'value'),
+     Input('volcano-padj-thresh', 'value')],
     prevent_initial_call=True,
 )
-def render_results(records):
+def render_results(records, lfc_thresh, padj_thresh):
     if not records:
         return _message_figure("Draw an ROI and Run to see the volcano."), [], []
     res = pd.DataFrame(records)
     for c in ('baseMean', 'log2FoldChange', 'pvalue', 'padj'):
         if c in res:
             res[c] = pd.to_numeric(res[c], errors='coerce')  # None (from the store) -> NaN
-    fig = create_volcano_figure(res)
+    lfc_t = float(lfc_thresh) if lfc_thresh not in (None, '') else 1.0
+    padj_t = float(padj_thresh) if padj_thresh not in (None, '') else 0.05
+    fig = create_volcano_figure(res, lfc_thresh=lfc_t, padj_thresh=padj_t)
 
     show = res.sort_values('padj', na_position='last').copy()
     for c in ('baseMean', 'log2FoldChange', 'pvalue', 'padj'):

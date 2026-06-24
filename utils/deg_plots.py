@@ -46,6 +46,9 @@ def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subti
         fig.add_annotation(x=row['log2FoldChange'], y=row['nlp'], text=row['gene'],
                            showarrow=False, font=dict(size=10), yshift=9)
 
+    if subtitle is None:
+        subtitle = (f"|log2FC| &gt; {lfc_thresh:g} · adj p &lt; {padj_thresh:g} "
+                    f"· {int(sig.sum()):,} significant")
     title = "Volcano — positive log2FC = enriched in ROI A"
     if subtitle:
         title += f"<br><sub>{subtitle}</sub>"

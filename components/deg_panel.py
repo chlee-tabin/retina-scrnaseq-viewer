@@ -62,6 +62,18 @@ def create_deg_panel():
 
         html.Div(id='deg-status', className='small my-2'),
         dcc.Graph(id='deg-recap-plot', style={'height': '34vh'}),
+
+        # Volcano significance thresholds. These re-flag/re-label the stored results
+        # instantly (no DEG recompute), matching the manuscript default |log2FC|>1, adj p<0.05.
+        dbc.Row([
+            dbc.Col(html.Span("Volcano thresholds:", className="small fw-semibold"), width="auto"),
+            dbc.Col(html.Span("|log2FC| >", className="small"), width="auto"),
+            dbc.Col(dcc.Input(id='volcano-lfc-thresh', type='number', value=1.0, min=0, step=0.1,
+                              debounce=True, style={'width': '78px'}), width="auto"),
+            dbc.Col(html.Span("adj p <", className="small"), width="auto"),
+            dbc.Col(dcc.Input(id='volcano-padj-thresh', type='number', value=0.05, min=0, max=1,
+                              step=0.01, debounce=True, style={'width': '88px'}), width="auto"),
+        ], className="g-2 align-items-center my-1"),
         dcc.Graph(id='volcano-plot', style={'height': '55vh'}),
         dash_table.DataTable(
             id='deg-table', page_size=15, sort_action='native', filter_action='native',

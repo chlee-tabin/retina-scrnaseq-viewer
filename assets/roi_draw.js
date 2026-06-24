@@ -60,7 +60,12 @@ window.dash_clientside = window.dash_clientside || {};
 
   function draw() {
     var P = plotly();
-    if (!S.gd || !P) return;
+    var gd = gdEl();
+    // Re-fetch the live gd and require it to be fully initialised: relayout on a div that
+    // is still (re)rendering throws "_guiEditing" (e.g. the redraw-on-figure hook racing a
+    // main-plot re-render). Bail quietly; the next sync redraws.
+    if (!gd || !gd._fullLayout || !P) return;
+    S.gd = gd;
     var shapes = [];
     ['A', 'B'].forEach(function (k) {
       var v = S.verts[k];
@@ -69,7 +74,7 @@ window.dash_clientside = window.dash_clientside || {};
         line: { color: COL[k].line, width: 2 },
         fillcolor: v.length > 2 ? COL[k].fill : 'rgba(0,0,0,0)' });
     });
-    P.relayout(S.gd, { shapes: shapes });
+    try { P.relayout(gd, { shapes: shapes }); } catch (e) { /* gd mid-render; a later sync redraws */ }
   }
 
   function sync() {
