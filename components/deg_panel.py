@@ -36,6 +36,16 @@ def create_deg_panel():
                     className="d-flex align-items-center"),
         ], className="g-2 mb-2 align-items-center"),
 
+        # Reproduce a manuscript area-DEG gate as ROI A (e.g. chick HAA -> CYP26C1 up,
+        # FOXD1 down); then Run. Populated per dataset from datasets_config figure_regions.
+        dbc.Row([
+            dbc.Col(html.Span("Load figure region:", className="small me-1"),
+                    width="auto", className="d-flex align-items-center"),
+            dbc.Col(dcc.Dropdown(id='roi-preset-select', options=[], clearable=True,
+                                 placeholder="reproduce a manuscript area-DEG gate (sets ROI A)",
+                                 style={'minWidth': '340px'}), width="auto"),
+        ], className="g-2 mb-2 align-items-center"),
+
         html.Div([
             dbc.Button("Run differential expression", id='run-deg-btn',
                        color='primary', className='me-2'),

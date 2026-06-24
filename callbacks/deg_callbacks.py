@@ -40,7 +40,7 @@ def toggle_deg_section(plot_type):
 
 # ---- Draw-mode buttons: pick which ROI to draw; Clear resets both ----
 @callback(
-    [Output('roi-draw-mode-store', 'data'),
+    [Output('roi-draw-mode-store', 'data', allow_duplicate=True),
      Output('roi-vertices-store', 'data', allow_duplicate=True)],
     [Input('roi-draw-a-btn', 'n_clicks'),
      Input('roi-draw-b-btn', 'n_clicks'),
@@ -73,6 +73,47 @@ def draw_state(mode, verts):
     else:
         msg = f"A: {na} / B: {nb} vertices" if (na or nb) else "No ROI drawn yet."
     return mode != 'A', mode != 'B', msg
+
+
+# ---- Figure-region presets: reproduce a manuscript area-DEG gate as ROI A ----
+@callback(
+    Output('roi-preset-select', 'options'),
+    Input('data-store', 'data'),
+)
+def populate_roi_presets(data_store):
+    regions = (data_store or {}).get('figure_regions') or []
+    return [{'label': r['name'], 'value': r['name']} for r in regions]
+
+
+@callback(
+    [Output('roi-vertices-store', 'data', allow_duplicate=True),
+     Output('roi-draw-mode-store', 'data', allow_duplicate=True)],
+    Input('roi-preset-select', 'value'),
+    State('data-store', 'data'),
+    prevent_initial_call=True,
+)
+def load_preset_region(region_name, data_store):
+    """Set ROI A to the rectangle of a manuscript area-DEG gate. The gate is an axis-aligned
+    range in NT.Score × DV.Score fractions of the data's score range (matches the figure's
+    `gate()` in area_significant_deg.R); reproduces a Fig 6H/S23 panel after Run."""
+    if not region_name or not data_store:
+        return no_update, no_update
+    spec = {r['name']: r for r in (data_store.get('figure_regions') or [])}.get(region_name)
+    if not spec:
+        return no_update, no_update
+    adata = load_adata(data_store['filename'])
+    if not {'NT.Score', 'DV.Score'} <= set(adata.obs.columns):
+        return no_update, no_update
+    nt = pd.to_numeric(adata.obs['NT.Score'], errors='coerce')
+    dv = pd.to_numeric(adata.obs['DV.Score'], errors='coerce')
+    nlo, nhi, dlo, dhi = float(nt.min()), float(nt.max()), float(dv.min()), float(dv.max())
+    n, ni, di = spec['n'], spec['nt'], spec['dv']
+    x0 = nlo + (nhi - nlo) * ni[0] / n
+    x1 = nlo + (nhi - nlo) * (ni[1] + 1) / n
+    y0 = dlo + (dhi - dlo) * di[0] / n
+    y1 = dlo + (dhi - dlo) * (di[1] + 1) / n
+    rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    return {'A': rect, 'B': []}, None   # ROI A = the gate; exit any draw mode
 
 
 # ---- Run the pseudobulk DE for the drawn ROIs ----
