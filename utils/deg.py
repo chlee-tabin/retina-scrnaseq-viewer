@@ -94,6 +94,23 @@ def resolve_rois(idx_a, idx_b, n_obs):
     return labels, info
 
 
+def polygon_to_indices(verts, xs, ys):
+    """Indices of cells whose (xs[i], ys[i]) fall inside the closed polygon `verts`
+    ([[x, y], ...] in the SAME coordinate space as xs/ys, e.g. NT.Score × DV.Score).
+
+    This is what makes the ROI work on ANY rendering of that space (per-cell scatter,
+    binned heatmap, smoothed map): selection is a point-in-polygon test against the
+    cells' own coordinates, independent of how the view is drawn. A polygon with < 3
+    vertices selects nothing.
+    """
+    if not verts or len(verts) < 3:
+        return []
+    from matplotlib.path import Path
+    path = Path(np.asarray(verts, dtype=float))
+    pts = np.column_stack([np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)])
+    return np.where(path.contains_points(pts))[0].tolist()
+
+
 def replicate_labels(obs, replicate_columns):
     """Per-cell replicate label from the configured columns (e.g. library x genotype),
     joined on SEP. None if no configured column is present (-> pseudobulk impossible)."""
@@ -282,6 +299,11 @@ def _demo():
     region_a = obs['NT.Score'].to_numpy() > 0.3        # ROI A = nasal stripe
     counts[region_a, 0] += 150                         # gene g0 strongly up in A
     var = pd.DataFrame(index=[f"g{j}" for j in range(n_genes)])
+
+    # polygon-in-score-space selection reproduces the boolean region (the ROI mechanism)
+    poly = [[0.3, -1.1], [1.1, -1.1], [1.1, 1.1], [0.3, 1.1]]
+    poly_idx = polygon_to_indices(poly, obs['NT.Score'], obs['DV.Score'])
+    assert set(poly_idx) == set(np.where(region_a)[0]), "polygon selection must match NT>0.3"
 
     adata = ad.AnnData(X=counts.astype(np.float32), obs=obs, var=var)
     adata.raw = adata                                  # exercise the .raw path

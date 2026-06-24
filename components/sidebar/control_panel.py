@@ -15,23 +15,11 @@ def create_control_panel():
                     options=[
                         {'label': 'Embedding / spatial map', 'value': 'map'},
                         {'label': 'Expression by group', 'value': 'group'},
-                        {'label': 'ROI differential expression (volcano)', 'value': 'deg'},
                     ],
                     value='map',
                     className="mb-3",
                     labelStyle={'display': 'block'},
                 ),
-
-                # ---- ROI-DEG CONTROLS (shown only for the volcano view) ----
-                html.Div([
-                    html.Label("Min cells per pseudobulk:"),
-                    dcc.Input(id='deg-min-cells', type='number', value=50, min=5, step=5,
-                              debounce=True, style={'width': '100%'}),
-                    html.Div(
-                        "Pseudobulks below this cell count are dropped (manuscript floor "
-                        "= 50). Lower it for small ROIs, at the cost of noisier estimates.",
-                        className="small text-muted mt-1"),
-                ], id='deg-controls', style={'display': 'none'}, className="mb-3"),
 
                 # ---- MAP CONTROLS (embedding / spatial map view) ----
                 html.Div([

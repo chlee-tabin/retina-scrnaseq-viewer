@@ -56,16 +56,16 @@ def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subti
     return fig
 
 
-def create_recap_figure(x, y, labels, mode):
-    """Topographic scatter coloured by the resolved ROI assignment (A / B-or-rest /
-    unused) -- the disjoint selection that was actually contrasted."""
+def create_recap_figure(x, y, labels, mode, x_label='NT.Score', y_label='DV.Score'):
+    """Scatter coloured by the resolved ROI assignment (A / B-or-rest / unused) -- the
+    disjoint selection that was actually contrasted, in the embedding's axes."""
     other = 'rest' if mode == 'A_vs_rest' else 'ROI B'
     disp = np.where(labels == 'A', 'ROI A', np.where(labels == 'B', other, '(unused)'))
     df = pd.DataFrame({'x': np.asarray(x), 'y': np.asarray(y), 'color': disp})
     cmap = {'ROI A': '#2c7fb8', 'ROI B': '#d95f0e', 'rest': '#bdbdbd', '(unused)': '#e8e8e8'}
     order = ['(unused)', 'rest', 'ROI B', 'ROI A']   # ROIs drawn last (on top)
     fig = create_scatter_plot(
-        df, 'NT.Score vs DV.Score', 'ROI assignment',
+        df, f'{x_label} vs {y_label}', 'ROI assignment',
         treat_as_categorical=True, color_map=cmap, category_order=order,
         plot_order='none')
     fig.update_layout(title="Selected cells (resolved A / B assignment)", margin=dict(t=50))
