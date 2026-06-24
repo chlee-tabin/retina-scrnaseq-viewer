@@ -12,6 +12,7 @@ from utils.plotting import (
     create_sphere_figure,
     create_sphere_binned_figure,
     create_dual_gene_sphere_figure,
+    _add_haa_marker_2d,
     _message_figure,
 )
 import pandas as pd
@@ -34,20 +35,19 @@ def _gene_vector(adata, gene):
     return np.asarray(sub).flatten()
 
 
-def _haa_landmark(adata, dv, nt, proj_params, marker):
-    """(x, y, z) on the sphere for the HAA landmark = the median topographic position of the
-    dataset's HAA marker's expressing cells (chick: CYP26C1, set per-dataset in
-    datasets_config.yml). Returns None when no marker is configured, the marker is absent, or
-    too few cells express it -- so human/mouse (no marker) show no HAA label."""
-    if not marker or marker not in adata.var_names:
+def _haa_center(adata, dv, nt, marker, mode, *, min_cells=5, smooth_sigma=0.0):
+    """(dv, nt) HAA centre for the dataset's marker (chick: CYP26C1) by the chosen `mode`
+    (wholemount.haa_center: footprint / expression / domain / peak). The marker is sparse and
+    ring-ish, so 'the centre' depends on the definition -- the HAA-mode control exposes them.
+    Uses the marker's OWN expression (independent of whatever gene is being coloured). Returns
+    None when no marker / marker absent / mode None|'off' / too few cells express it -- so
+    human/mouse (no marker) and 'Off' draw no landmark."""
+    if not marker or mode in (None, 'off') or marker not in adata.var_names:
         return None
-    pos = np.asarray(_gene_vector(adata, marker)) > 0
-    if int(np.count_nonzero(pos)) < 5:
+    expr = np.asarray(_gene_vector(adata, marker), dtype=float)
+    if int(np.count_nonzero(expr > 0)) < 5:
         return None
-    mdv = float(np.nanmedian(np.asarray(dv)[pos]))
-    mnt = float(np.nanmedian(np.asarray(nt)[pos]))
-    hx, hy, hz = wholemount.sphere_coords(np.array([mdv]), np.array([mnt]), params=proj_params)
-    return (float(hx[0]), float(hy[0]), float(hz[0]))
+    return wholemount.haa_center(dv, nt, expr, mode, min_cells=min_cells, smooth_sigma=smooth_sigma)
 
 
 # Persist the user's 3D-sphere rotation across re-renders. dcc.Graph's uirevision does NOT
@@ -273,7 +273,9 @@ def _nasal_gap_params(cfg, layers, frac, dorsal, ventral):
      Input('nasal-gap-layers', 'value'),
      Input('nasal-gap-frac', 'value'),
      Input('nasal-gap-dorsal', 'value'),
-     Input('nasal-gap-ventral', 'value')],
+     Input('nasal-gap-ventral', 'value'),
+     # HAA-pointer mode (off / footprint / expression / domain / peak), all projections.
+     Input('haa-mode', 'value')],
     State('sphere-camera-store', 'data'),
     prevent_initial_call=True
 )
@@ -287,7 +289,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
                 group_value_source, group_meta,
                 wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
-                ng_layers, ng_frac, ng_dorsal, ng_ventral,
+                ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode,
                 sphere_cam):
     logger.debug("update_plot called with parameters:")
 
@@ -443,8 +445,13 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     # x/y are placeholders for the shared DataFrame / compare guards.
                     sphere_xyz = wholemount.sphere_coords(dv_cells, nt_cells, params=proj_params)
                     x, y = sphere_xyz[0], sphere_xyz[1]
-                    haa_xyz = _haa_landmark(adata, dv_cells, nt_cells, proj_params,
-                                            data_store.get('haa_marker'))
+                    hc = _haa_center(adata, dv_cells, nt_cells, data_store.get('haa_marker'),
+                                     haa_mode, min_cells=data_store.get('min_cells_per_bin', 5),
+                                     smooth_sigma=data_store.get('smooth_sigma', 2.0))
+                    if hc is not None:
+                        hx, hy, hz = wholemount.sphere_coords(np.array([hc[0]]), np.array([hc[1]]),
+                                                              params=proj_params)
+                        haa_xyz = (float(hx[0]), float(hy[0]), float(hz[0]))
                 else:
                     # Per-cell warp (used by the scatter + dual-gene views; the binned view
                     # re-bins in score space below for a stray-free, faithful map).
@@ -496,7 +503,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     binned=binning_on, bin_size=bin_number, percentile=percentile,
                     smooth_sigma=smooth_sigma, min_cells=mc, color_floor=cf,
                     shared_scale=shared, bin_stat=(bin_stat or 'mean'), params=proj_params,
-                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
+                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
                 ), sphere_cam)
             if custom_projection == 'flower' and binning_on:
                 # Faithful score-space binned flower per panel (matches the single-gene
@@ -563,7 +570,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     min_cells=data_store.get('min_cells_per_bin', 1),
                     color_floor=data_store.get('color_floor', 0.05),
                     bin_stat=(bin_stat or 'mean'), color_label=cl, params=proj_params,
-                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
+                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
                     nasal_gap=nasal_gap_eff,
                 ), sphere_cam)
             s_cmap, s_corder = _annotation_style(data_store, color_by)
@@ -572,7 +579,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 color_series, color_by, gene=gene,
                 treat_as_categorical=treat_as_categorical,
                 color_map=s_cmap, category_order=s_corder,
-                haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
+                haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
                 dv=dv_cells, nt=nt_cells, params=proj_params,
                 nasal_gap=nasal_gap_eff,
             ), sphere_cam)
@@ -628,6 +635,26 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 color_map=s_cmap, category_order=s_corder,
                 plot_order=(viz_mode or 'random'),
             )
+
+        # HAA landmark on the 2D whole-mount views: the flat flower (warped into its display
+        # space) or raw axes when they ARE the NT/DV score columns. Same mode/centre as the
+        # sphere, projected into this view; the sphere drew its own above and returned earlier.
+        haa_marker = data_store.get('haa_marker')
+        if (embedding == 'custom_embedding' and custom_projection != 'sphere'
+                and haa_marker and (haa_mode or 'off') != 'off'
+                and wholemount.has_scores(adata.obs.columns)):
+            hc = _haa_center(adata, adata.obs[wholemount.DV_COL].to_numpy(),
+                             adata.obs[wholemount.NT_COL].to_numpy(), haa_marker, haa_mode,
+                             min_cells=data_store.get('min_cells_per_bin', 5),
+                             smooth_sigma=data_store.get('smooth_sigma', 2.0))
+            if hc is not None:
+                hdv, hnt = hc
+                if custom_projection == 'flower':
+                    hx, hy = wholemount.wholemount_coords(np.array([hdv]), np.array([hnt]),
+                                                          params=proj_params)
+                    fig = _add_haa_marker_2d(fig, float(hx[0]), float(hy[0]), haa_marker, haa_mode)
+                elif custom_x == wholemount.NT_COL and custom_y == wholemount.DV_COL:
+                    fig = _add_haa_marker_2d(fig, float(hnt), float(hdv), haa_marker, haa_mode)
 
         return fig
 
@@ -785,6 +812,20 @@ def toggle_nasal_gap_controls(custom_projection, data_store):
     # configure `nasal_gap` (chick under-samples the most-nasal retina). Show its controls only
     # then; raw axes / human / mouse never see them. Mirrors the band's own gating.
     if custom_projection in ('flower', 'sphere') and (data_store or {}).get('nasal_gap'):
+        return {'display': 'block'}
+    return {'display': 'none'}
+
+
+@callback(
+    Output('haa-mode-controls', 'style'),
+    Input('data-store', 'data')
+)
+def toggle_haa_controls(data_store):
+    # The HAA pointer applies to every whole-mount projection (raw NT/DV axes, flower, sphere),
+    # but only for datasets that configure an haa_marker (chick: CYP26C1). Show its control then;
+    # human/mouse never see it. The custom-embedding-container already hides it off the custom
+    # embedding, so this gates on the marker alone.
+    if (data_store or {}).get('haa_marker'):
         return {'display': 'block'}
     return {'display': 'none'}
 

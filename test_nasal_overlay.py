@@ -6,6 +6,7 @@ Run: ~/repos/_retina_viewer_venv/bin/python test_nasal_overlay.py
 import numpy as np
 
 from utils import wholemount as wm
+from utils.wholemount import marker_footprint_center, haa_center
 from utils.plotting import _missing_nasal_overlay, _missing_nasal_overlay_flat
 
 
@@ -85,6 +86,41 @@ def test_flat_overlay():
     assert _missing_nasal_overlay_flat(*_disc_cells(nt_shift=-0.8), None, frac=0.13, layers=2, bin_size=40) == []
 
 
+def test_marker_footprint_center():
+    # A ring of 'present' cells centred at (dv=0.10, nt=0.60): the presence-centroid must
+    # sit at the ring CENTRE, and must resist a dense off-centre clump (equal weight per bin,
+    # unlike a per-cell mean which would jump to the clump). This is the HAA robustness point.
+    th = np.linspace(0, 2*np.pi, 600, endpoint=False)
+    dv = 0.10 + 0.30*np.sin(th); nt = 0.60 + 0.30*np.cos(th)
+    present = np.ones(len(th), bool)
+    c = marker_footprint_center(dv, nt, present, bin_size=30, min_cells=1)
+    assert c is not None and abs(c[0]-0.10) < 0.10 and abs(c[1]-0.60) < 0.10, f"ring centre off: {c}"
+    # add 3000 cells piled in ONE off-centre spot -> many cells but ~1 extra bin -> centre barely moves
+    dv2 = np.concatenate([dv, np.full(3000, 0.10)]); nt2 = np.concatenate([nt, np.full(3000, 1.30)])
+    c2 = marker_footprint_center(dv2, nt2, np.ones(len(dv2), bool), bin_size=30, min_cells=1)
+    assert abs(c2[1]-0.60) < 0.20, f"presence centroid dragged toward the dense clump: {c2}"
+    assert marker_footprint_center(dv, nt, np.zeros(len(th), bool)) is None   # nothing present -> None
+
+
+def test_haa_center_modes():
+    # A broad low-expression footprint centred at nt=0.3, plus a dense BRIGHT clump at nt=0.8.
+    # The modes must order along nt: footprint (geometric centre, ~0.3) is most central;
+    # peak/domain sit on the bright clump (~0.8); expression-weighted is in between.
+    rs = np.random.RandomState(0)
+    d_lo = rs.uniform(-0.5, 0.5, 800); nt_lo = rs.uniform(0.0, 0.6, 800)        # broad, low expr
+    d_hi = rs.uniform(-0.1, 0.1, 250); nt_hi = rs.uniform(0.75, 0.85, 250)      # tight, bright
+    dv = np.concatenate([d_lo, d_hi]); nt = np.concatenate([nt_lo, nt_hi])
+    expr = np.concatenate([np.full(800, 0.3), np.full(250, 2.5)])
+    fp = haa_center(dv, nt, expr, 'footprint',  bin_size=30, min_cells=1)
+    ew = haa_center(dv, nt, expr, 'expression', bin_size=30, min_cells=1)
+    dm = haa_center(dv, nt, expr, 'domain',     bin_size=30, min_cells=1)
+    pk = haa_center(dv, nt, expr, 'peak',       bin_size=30, min_cells=1)
+    assert None not in (fp, ew, dm, pk)
+    assert fp[1] < ew[1] < pk[1], f"nt order wrong: fp={fp[1]:.2f} ew={ew[1]:.2f} pk={pk[1]:.2f}"
+    assert pk[1] > 0.7 and dm[1] > 0.7, f"domain/peak should sit on the bright clump: dm={dm} pk={pk}"
+    assert haa_center(dv, nt, np.zeros_like(expr), 'domain') is None   # no expression -> None
+
+
 def test_temporal_only_has_no_band():
     # Cells pushed temporally (NT negative) -> no populated bin in the nasal wedge -> no band.
     dv, nt = _disc_cells(nt_shift=-0.8)
@@ -96,5 +132,7 @@ if __name__ == "__main__":
     test_wedge_shrinks_with_reach()
     test_band_geometry()
     test_flat_overlay()
+    test_marker_footprint_center()
+    test_haa_center_modes()
     test_temporal_only_has_no_band()
     print("all geometry checks passed")

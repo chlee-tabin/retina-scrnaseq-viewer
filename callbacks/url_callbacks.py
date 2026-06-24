@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
      Output('nasal-gap-frac', 'value', allow_duplicate=True),
      Output('nasal-gap-dorsal', 'value', allow_duplicate=True),
      Output('nasal-gap-ventral', 'value', allow_duplicate=True),
+     Output('haa-mode', 'value', allow_duplicate=True),
      Output('sphere-camera-store', 'data', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 29
+    n_out = 30
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -89,6 +90,7 @@ def initialize_from_url(search, pathname):
         state.get('ng_frac', no_update),
         state.get('ng_dorsal', no_update),
         state.get('ng_ventral', no_update),
+        state.get('haa_mode', no_update),
         state.get('sphere_cam', no_update),
     )
 
@@ -137,6 +139,7 @@ def initialize_from_url(search, pathname):
      State('nasal-gap-frac', 'value'),
      State('nasal-gap-dorsal', 'value'),
      State('nasal-gap-ventral', 'value'),
+     State('haa-mode', 'value'),
      State('sphere-camera-store', 'data'),
      State('url', 'href')],
     prevent_initial_call=True
@@ -151,7 +154,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
               wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
               group_value_source, group_meta,
-              ng_layers, ng_frac, ng_dorsal, ng_ventral, sphere_cam,
+              ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode, sphere_cam,
               current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
@@ -182,6 +185,9 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
     if embedding == 'custom_embedding':
         state_dict['custom_x'] = custom_x
         state_dict['custom_y'] = custom_y
+        # HAA-pointer mode (applies to all projections incl. raw NT/DV axes; chick-gated on load).
+        if haa_mode:
+            state_dict['haa_mode'] = haa_mode
         if custom_projection and custom_projection != 'raw':
             state_dict['custom_projection'] = custom_projection
             # Advanced whole-mount projection parameters (only when the flower view is on).

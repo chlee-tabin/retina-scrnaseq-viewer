@@ -82,6 +82,39 @@ def create_control_panel():
                                 ),
                             ], id='raw-axes-controls'),
 
+                            # HAA landmark pointer (datasets with a configured haa_marker, e.g.
+                            # chick CYP26C1). The marker is sparse + ring-ish so several "centre"
+                            # definitions differ; expose them as a mode so users can explore. Drawn
+                            # in ALL projections (raw NT/DV axes, flower, sphere); Off hides it.
+                            # Shown via toggle_haa_controls (only when the dataset configures one).
+                            html.Div([
+                                html.Label([
+                                    "HAA pointer",
+                                    _help('help-haa-mode', "HAA landmark pointer",
+                                          "Marks the high-acuity area (chick: centre of the CYP26C1 "
+                                          "domain). The marker is detected in <1% of cells, so "
+                                          "'the centre' depends on the definition — pick one:  "
+                                          "Footprint = geometric centre of detected bins (most "
+                                          "central);  Expression-weighted = centre of mass of the "
+                                          "binned signal;  Domain = centroid of bins ≥50% of peak "
+                                          "(the FISH-calibrated spatial-domain gate; the bright "
+                                          "core);  Peak = the hottest bins.  Off hides the diamond. "
+                                          "Drawn in all projections."),
+                                ], className="mt-2 small fw-semibold"),
+                                dcc.Dropdown(
+                                    id='haa-mode',
+                                    options=[
+                                        {'label': 'Off', 'value': 'off'},
+                                        {'label': 'Footprint (detection centre)', 'value': 'footprint'},
+                                        {'label': 'Expression-weighted', 'value': 'expression'},
+                                        {'label': 'Domain — bright core (≥50% peak)', 'value': 'domain'},
+                                        {'label': 'Peak (hot spot)', 'value': 'peak'},
+                                    ],
+                                    value='domain',     # the bright-core domain centre (default)
+                                    clearable=False, className="small mb-2",
+                                ),
+                            ], id='haa-mode-controls', style={'display': 'none'}),
+
                             # Advanced whole-mount projection parameters (shown only under
                             # the flower projection). Defaults reproduce the shipped
                             # reviewer figure; every knob feeds wholemount.flower_transform.

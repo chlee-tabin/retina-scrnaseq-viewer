@@ -143,6 +143,7 @@ custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch,      # whole-mount 
   wm_cuts, wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode,
   wm_gap_frac, wm_pole,
 ng_layers, ng_frac, ng_dorsal, ng_ventral,                        # uncaptured-nasal cap (flower + sphere)
+haa_mode,                                                         # HAA pointer mode (off/footprint/expression/domain/peak)
 sphere_cam,                                                       # 3D-sphere viewpoint (camera; both panels)
 group_by, group_split, group_gene, group_style, gene_module,      # group view
   group_positive_only, group_replicate, group_value_source, group_meta
@@ -151,7 +152,8 @@ group_by, group_split, group_gene, group_style, gene_module,      # group view
 Added in v0.221 (additive, backward compatible — pre-v0.221 links omit these keys
 and restore the R2.5 cap defaults + the default face-on camera): `ng_layers`,
 `ng_frac`, `ng_dorsal`, `ng_ventral` (the uncaptured-nasal-cap extent / wedge,
-written for any non-raw whole-mount view) and `sphere_cam` (the 3D camera, written
+written for any non-raw whole-mount view); `haa_mode` (the HAA-pointer definition,
+written for any custom-embedding view); and `sphere_cam` (the 3D camera, written
 only in sphere mode when the user has rotated; one camera covers both compare panels).
 
 **Restoration ownership** (each control is written by exactly one restore-capable

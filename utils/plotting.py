@@ -738,9 +738,10 @@ def _orientation_labels(sx, sy, sz, haa_xyz=None):
     nasal +x, dorsal +y, temporal -x, ventral -y. Each floats just beyond the data rim in its
     direction (95th-pct colatitude there) and is lifted off the unit sphere so the cap doesn't
     occlude it; text billboards to the camera. The HAA landmark is dataset-specific: drawn (a
-    crimson diamond + 'HAA') only when `haa_xyz` is given -- e.g. the median position of chick
-    CYP26C1+ cells -- so human/mouse, which configure no marker, get NO HAA label. The HAA sits
-    at the marker's actual location, not the score-origin pole. Returns a LIST of traces."""
+    crimson diamond + 'HAA') only when `haa_xyz` is given -- e.g. the footprint centre of chick
+    CYP26C1+ cells (see _haa_landmark) -- so human/mouse, which configure no marker, get NO HAA
+    label. The HAA sits at the marker's actual location, not the score-origin pole. Returns a
+    LIST of traces."""
     sx = np.asarray(sx, dtype=float); sy = np.asarray(sy, dtype=float); sz = np.asarray(sz, dtype=float)
     m = np.isfinite(sx) & np.isfinite(sy) & np.isfinite(sz)
     sx, sy, sz = sx[m], sy[m], sz[m]
@@ -771,14 +772,42 @@ def _orientation_labels(sx, sy, sz, haa_xyz=None):
     return traces
 
 
-def _haa_caption(fig, haa_xyz, haa_marker):
-    """Add a small footnote spelling out the HAA landmark's definition (only when an HAA is
-    actually drawn), so the crimson diamond isn't an unexplained mark."""
+def _haa_caption(fig, haa_xyz, haa_marker, haa_mode=None):
+    """Footnote naming the HAA landmark's active definition (only when a diamond is drawn), so
+    the mark isn't unexplained. The marker is sparse, so several 'centres' differ; the HAA-mode
+    control lets the user switch between them -- the caption states which one is shown."""
     if haa_xyz is not None and haa_marker:
+        desc = wm.HAA_MODE_DESC.get(haa_mode, 'centre')
         fig.add_annotation(
-            text=f"◆ HAA = median DV/NT position of {haa_marker}⁺ cells",
+            text=(f"◆ HAA = {haa_marker} {desc}.  "
+                  f"Definition selectable (footprint / expression / domain / peak) — "
+                  f"{haa_marker} is sparse, so these differ."),
             xref='paper', yref='paper', x=0.0, y=0.0, xanchor='left', yanchor='bottom',
-            showarrow=False, font=dict(size=11, color='#c1121f'))
+            align='left', showarrow=False, font=dict(size=10, color='#c1121f'))
+    return fig
+
+
+def _add_haa_marker_2d(fig, x, y, haa_marker, haa_mode=None):
+    """Draw the HAA landmark (crimson diamond + 'HAA' + caption) on a 2D whole-mount figure
+    (flat flower, or raw NT/DV axes) -- the 2D twin of the sphere's _orientation_labels HAA.
+    `x, y` are the landmark's coordinates already in the figure's display space. No-op if None.
+
+    The caption goes BELOW the plot in an enlarged bottom margin (not the sphere's bottom-left
+    paper corner, which over a filled 2D panel overlaps the axes / data)."""
+    if x is None or y is None or not haa_marker:
+        return fig
+    fig.add_trace(go.Scatter(
+        x=[x], y=[y], mode='markers+text', text=['HAA'], textposition='top center',
+        textfont=dict(size=13, color='#c1121f'),
+        marker=dict(size=11, color='#c1121f', symbol='diamond'),
+        hoverinfo='skip', showlegend=False, name='HAA'))
+    desc = wm.HAA_MODE_DESC.get(haa_mode, 'centre')
+    fig.add_annotation(
+        text=(f"◆ HAA = {haa_marker} {desc}.  "
+              f"Definition selectable (footprint / expression / domain / peak)."),
+        xref='paper', yref='paper', x=0.0, y=-0.13, xanchor='left', yanchor='top',
+        align='left', showarrow=False, font=dict(size=10, color='#c1121f'))
+    fig.update_layout(margin_b=96)   # room below the x-axis for the caption
     return fig
 
 
@@ -919,7 +948,7 @@ def _missing_nasal_overlay_flat(dv, nt, params, *, frac, layers=2, dorsal_deg=45
 
 def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
                          treat_as_categorical=False, color_map=None, category_order=None,
-                         haa_xyz=None, haa_marker=None,
+                         haa_xyz=None, haa_marker=None, haa_mode=None,
                          dv=None, nt=None, params=None, nasal_gap=None):
     """3D spherical view of the whole-mount map: each cell a point on the unit sphere
     (utils.wholemount.sphere_coords), the native near-spherical geometry the flat flower
@@ -965,7 +994,7 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
         if ov:
             fig.add_traces(ov)
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D)'))
-    return _haa_caption(fig, haa_xyz, haa_marker)
+    return _haa_caption(fig, haa_xyz, haa_marker, haa_mode)
 
 
 def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
@@ -1029,7 +1058,7 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
 def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
                                 smooth_sigma=0, min_cells=1, color_floor=0.05,
                                 bin_stat='mean', color_label='expression', params=None,
-                                haa_xyz=None, haa_marker=None, nasal_gap=None):
+                                haa_xyz=None, haa_marker=None, haa_mode=None, nasal_gap=None):
     """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
 
     Identical score-grid binning to create_wholemount_binned_figure, but the grid VERTICES
@@ -1071,13 +1100,13 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
     for t in traces:
         fig.add_trace(t)
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D, score-space binned)'))
-    return _haa_caption(fig, haa_xyz, haa_marker)
+    return _haa_caption(fig, haa_xyz, haa_marker, haa_mode)
 
 
 def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bin_size=50,
                                    percentile=0.95, smooth_sigma=0, min_cells=1,
                                    color_floor=0.05, shared_scale=False, bin_stat='mean',
-                                   params=None, haa_xyz=None, haa_marker=None):
+                                   params=None, haa_xyz=None, haa_marker=None, haa_mode=None):
     """Two genes side-by-side on the sphere: two 3D scenes, each the same points/binned
     sphere as the single-gene views (reusing _reference_globe / _orientation_labels /
     _sphere_binned_traces). Each gene gets its OWN colour scale by default so a weak gene is
@@ -1141,7 +1170,7 @@ def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bi
     fig.update_layout(title='Whole-mount sphere (3D) — gene comparison', plot_bgcolor='white',
                       height=700, margin=dict(t=80, l=0, r=0, b=0), uirevision='wholemount-sphere',
                       scene=scene_cfg, scene2=dict(scene_cfg))
-    return _haa_caption(fig, haa_xyz, haa_marker)
+    return _haa_caption(fig, haa_xyz, haa_marker, haa_mode)
 
 
 def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin',
