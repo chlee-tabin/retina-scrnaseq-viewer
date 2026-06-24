@@ -9,6 +9,8 @@ drive the volcano, a sortable table, a resolved-selection recap, and a CSV downl
 Selection is point-in-polygon in score space, NOT Plotly point selection -- so the ROI
 works the same on the per-cell scatter, the binned heatmap, or the smoothed map.
 """
+import hashlib
+import json
 import logging
 
 import numpy as np
@@ -166,6 +168,18 @@ def load_preset_region(region_name, data_store):
     return {'A': rect, 'B': []}, None, 'NT.Score', 'DV.Score', 'custom_embedding', 'raw'
 
 
+def _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, projection):
+    """Stable hash of every input that determines a DE result. Stored with the result and
+    re-checked when the volcano/table/CSV are produced: a long run that finishes AFTER the
+    user changed an input (gunicorn runs callbacks on threads, so the invalidation callback
+    can't stop a late write) would otherwise resurrect a result for a region the map no longer
+    shows. A signature mismatch means the stored result is stale -> don't display or export it."""
+    payload = {'verts': verts or {}, 'file': (data_store or {}).get('filename'),
+               'min_cells': int(min_cells or 50), 'x': custom_x, 'y': custom_y,
+               'embedding': embedding, 'projection': projection}
+    return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
 # ---- Run the pseudobulk DE for the drawn ROIs ----
 @callback(
     [Output('deg-results-store', 'data', allow_duplicate=True),
@@ -238,7 +252,8 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         info.update(sel_info)
         # NaN padj/LFC (low-count genes) is not valid JSON for a dcc.Store -> None.
         records = res.astype(object).where(pd.notnull(res), None).to_dict('records')
-        return records, recap, _status(info, min_cells)
+        sig = _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, projection)
+        return {'records': records, 'sig': sig}, recap, _status(info, min_cells)
     except Exception as e:
         logger.error(f"run_deg_cb failed: {e}", exc_info=True)
         return (None, _message_figure("Internal error computing DEG — see server logs."),
@@ -266,12 +281,26 @@ def _status(info, min_cells):
     [Input('deg-results-store', 'data'),
      Input('volcano-lfc-thresh', 'value'),
      Input('volcano-padj-thresh', 'value')],
+    [State('roi-vertices-store', 'data'),
+     State('data-store', 'data'),
+     State('deg-min-cells', 'value'),
+     State('custom-x-select', 'value'),
+     State('custom-y-select', 'value'),
+     State('embedding-select', 'value'),
+     State('custom-projection', 'value')],
     prevent_initial_call=True,
 )
-def render_results(records, lfc_thresh, padj_thresh):
-    if not records:
+def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells,
+                   custom_x, custom_y, embedding, projection):
+    if not stored or not stored.get('records'):
         return _message_figure("Draw an ROI and Run to see the volcano."), [], []
-    res = pd.DataFrame(records)
+    # Reject a result whose inputs no longer match the current view (a late run that completed
+    # after the user changed the ROI/dataset/axes). The volcano/table must never describe a
+    # region the map isn't showing.
+    if stored.get('sig') != _run_signature(verts, data_store, min_cells, custom_x, custom_y,
+                                            embedding, projection):
+        return _message_figure("Inputs changed — click Run to recompute for the current view."), [], []
+    res = pd.DataFrame(stored['records'])
     for c in ('baseMean', 'log2FoldChange', 'pvalue', 'padj'):
         if c in res:
             res[c] = pd.to_numeric(res[c], errors='coerce')  # None (from the store) -> NaN
@@ -297,13 +326,25 @@ def render_results(records, lfc_thresh, padj_thresh):
 @callback(
     Output('deg-download', 'data'),
     Input('deg-download-btn', 'n_clicks'),
-    State('deg-results-store', 'data'),
+    [State('deg-results-store', 'data'),
+     State('roi-vertices-store', 'data'),
+     State('data-store', 'data'),
+     State('deg-min-cells', 'value'),
+     State('custom-x-select', 'value'),
+     State('custom-y-select', 'value'),
+     State('embedding-select', 'value'),
+     State('custom-projection', 'value')],
     prevent_initial_call=True,
 )
-def download_deg(n_clicks, records):
-    if not n_clicks or not records:
+def download_deg(n_clicks, stored, verts, data_store, min_cells, custom_x, custom_y,
+                 embedding, projection):
+    if not n_clicks or not stored or not stored.get('records'):
         raise PreventUpdate
-    df = pd.DataFrame(records).sort_values('padj', na_position='last')
+    # Don't export a result for a region the map no longer shows (see _run_signature).
+    if stored.get('sig') != _run_signature(verts, data_store, min_cells, custom_x, custom_y,
+                                           embedding, projection):
+        raise PreventUpdate
+    df = pd.DataFrame(stored['records']).sort_values('padj', na_position='last')
     return dcc.send_data_frame(df.to_csv, "roi_deg.csv", index=False)
 
 

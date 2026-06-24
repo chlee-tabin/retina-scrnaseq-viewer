@@ -58,6 +58,20 @@ window.dash_clientside = window.dash_clientside || {};
   // first Graph mounts. Resolve it lazily and no-op until it's ready.
   function plotly() { return window.Plotly || null; }
 
+  // The x/y subplot pairs in the figure: [{xref:'x',yref:'y'}, {xref:'x2',yref:'y2'}, ...].
+  // "Compare a second gene" shows the same DV/NT space twice, so we draw the overlay on every
+  // pair -- the ROI then appears on whichever panel was clicked (and its twin) rather than
+  // always being relaid out onto the left panel.
+  function subplotRefs(gd) {
+    var fl = gd._fullLayout, xs = [];
+    for (var k in fl) {
+      var ax = fl[k];
+      if (ax && ax._id && ax._id.charAt(0) === 'x' && xs.indexOf(ax._id) < 0) xs.push(ax._id);
+    }
+    if (!xs.length) xs = ['x'];
+    return xs.map(function (x) { return { xref: x, yref: 'y' + x.slice(1) }; });
+  }
+
   function draw() {
     var P = plotly();
     var gd = gdEl();
@@ -66,13 +80,16 @@ window.dash_clientside = window.dash_clientside || {};
     // main-plot re-render). Bail quietly; the next sync redraws.
     if (!gd || !gd._fullLayout || !P) return;
     S.gd = gd;
+    var refs = subplotRefs(gd);
     var shapes = [];
     ['A', 'B'].forEach(function (k) {
       var v = S.verts[k];
       if (!v || !v.length) return;
-      shapes.push({ type: 'path', path: pathStr(v), xref: 'x', yref: 'y', layer: 'above',
-        line: { color: COL[k].line, width: 2 },
-        fillcolor: v.length > 2 ? COL[k].fill : 'rgba(0,0,0,0)' });
+      refs.forEach(function (r) {
+        shapes.push({ type: 'path', path: pathStr(v), xref: r.xref, yref: r.yref, layer: 'above',
+          line: { color: COL[k].line, width: 2 },
+          fillcolor: v.length > 2 ? COL[k].fill : 'rgba(0,0,0,0)' });
+      });
     });
     try { P.relayout(gd, { shapes: shapes }); } catch (e) { /* gd mid-render; a later sync redraws */ }
   }
