@@ -113,9 +113,12 @@ def polygon_to_indices(verts, xs, ys):
 
 def replicate_labels(obs, replicate_columns):
     """Per-cell replicate label from the configured columns (e.g. library x genotype),
-    joined on SEP. None if no configured column is present (-> pseudobulk impossible)."""
-    cols = [c for c in (replicate_columns or []) if c in obs.columns]
-    if not cols:
+    joined on SEP. None unless EVERY configured column is present: dropping a missing one
+    would silently coarsen the pseudobulk unit (e.g. library x genotype -> library), merging
+    biological replicates and skewing the DE -- so we refuse the run instead (the callback
+    reports 'no configured replicate unit')."""
+    cols = list(replicate_columns or [])
+    if not cols or any(c not in obs.columns for c in cols):
         return None
     return obs[cols].astype(str).agg(SEP.join, axis=1).to_numpy()
 
