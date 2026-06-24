@@ -672,8 +672,10 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
 @callback(
     [Output('custom-x-select', 'options'),
      Output('custom-y-select', 'options'),
-     Output('custom-x-select', 'value'),
-     Output('custom-y-select', 'value'),
+     # value outputs allow_duplicate: the ROI figure-region preset (deg_callbacks) also
+     # pins these to NT.Score / DV.Score so the gate is shown + tested in its own space.
+     Output('custom-x-select', 'value', allow_duplicate=True),
+     Output('custom-y-select', 'value', allow_duplicate=True),
      Output('custom-embedding-container', 'style')],
     [Input('data-store', 'data'),
      Input('embedding-select', 'value'),

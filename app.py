@@ -21,6 +21,7 @@ from callbacks.selection_callbacks import *
 from callbacks.url_callbacks import *
 from callbacks.main_callbacks import *
 from callbacks.status_callbacks import *
+from callbacks.deg_callbacks import *
 
 # Import utilities
 from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding
@@ -323,6 +324,8 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             'annotation_order': dataset.get('annotation_order', []),
             'annotation_colors': dataset.get('annotation_colors', {}),
             'replicate_columns': dataset.get('replicate_columns', []),
+            # Manuscript area-DEG gates offered as ROI presets ("Load figure region").
+            'figure_regions': dataset.get('figure_regions', []),
             # CP-normalisation target of .X (1e4=CP10K, 1e6=CPM, ...) so the group
             # "Figure" reconstructs raw counts for ANY log1p(CP*) normalisation; None
             # when .X is not a clean log1p(CP) (then Panel A is omitted).

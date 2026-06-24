@@ -30,6 +30,16 @@ datasets:
     smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
     min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
     replicate_columns: ["library", "genotype"]  # pseudobulk unit for the group figure (Panel A)
+    # Manuscript area-DEG gates (scripts/analysis/area_significant_deg.R) as ROI presets, so
+    # "Load figure region" reproduces a Fig 6H volcano panel (HAA -> CYP26C1 up, FOXD1 down).
+    # Axis-aligned rectangle in NT.Score (x) x DV.Score (y): a cell is inside when its score
+    # falls in [nt[0]/n, (nt[1]+1)/n) x [dv[0]/n, (dv[1]+1)/n) of each axis's data range.
+    figure_regions:
+      - {name: "HAA — CYP26C1 (Fig 6H)",  n: 10, nt: [6, 7], dv: [4, 5]}
+      - {name: "Ventral — VAX1",          n: 7,  nt: [0, 6], dv: [0, 2]}
+      - {name: "Dorsal — ALDH1A1",        n: 7,  nt: [0, 6], dv: [4, 6]}
+      - {name: "Nasal — FOXG1",           n: 7,  nt: [5, 6], dv: [0, 6]}
+      - {name: "Temporal — FOXD1",        n: 7,  nt: [0, 2], dv: [0, 6]}
     gene_modules:              # functional gene groups for the dot-plot module selector
       NPY system: [NPY, NPY1R, NPY2R, NPY4R, NPY5R, NPY6R]
       Cell cycle: [MKI67, TOP2A, PCNA, CCND1, CCNB2, CDK1, UBE2C, BIRC5]
@@ -119,6 +129,17 @@ datasets:
     default_gene: "FGF8"
     smooth_sigma: 0.5
     min_cells_per_bin: 2
+    # Pseudobulk replicate unit for the ROI differential-expression volcano: 14 individual
+    # donor eyes / libraries (PCW7-11), complete (no missing values; `sample` has NaN for
+    # one GEO batch). The object carries true raw counts, so pseudobulks are exact.
+    replicate_columns: ["library"]
+    # Manuscript area-DEG gates (human; the high-acuity region is the Fovea). See chick.
+    figure_regions:
+      - {name: "Fovea — CYP26C1 (Fig S23)", n: 10, nt: [3, 4], dv: [4, 5]}
+      - {name: "Ventral — VAX1",            n: 7,  nt: [0, 6], dv: [0, 2]}
+      - {name: "Dorsal — ALDH1A1",          n: 7,  nt: [0, 6], dv: [4, 6]}
+      - {name: "Nasal — FOXG1",             n: 7,  nt: [4, 6], dv: [0, 6]}
+      - {name: "Temporal — FOXD1",          n: 7,  nt: [0, 2], dv: [0, 6]}
     metadata:
       tissue: "Retina"
       organism: "Human (Homo sapiens)"
@@ -136,6 +157,16 @@ datasets:
     default_gene: "Fgf8"
     smooth_sigma: 2.0
     min_cells_per_bin: 5
+    # Pseudobulk replicate unit for the ROI differential-expression volcano: the 7 CR9
+    # libraries across 4 GEO series (clark E14 x2 / E16, wu E13.5, bala WT E13.5, logiudice
+    # E15.5 x2). True raw counts present, so pseudobulks are exact.
+    replicate_columns: ["library"]
+    # Generic topographic-quadrant ROI presets (no dedicated mouse high-acuity gate). See chick.
+    figure_regions:
+      - {name: "Ventral — Vax1",   n: 7, nt: [0, 6], dv: [0, 2]}
+      - {name: "Dorsal — Aldh1a1", n: 7, nt: [0, 6], dv: [4, 6]}
+      - {name: "Nasal — Foxg1",    n: 7, nt: [5, 6], dv: [0, 6]}
+      - {name: "Temporal — Foxd1", n: 7, nt: [0, 2], dv: [0, 6]}
     metadata:
       tissue: "Retina"
       organism: "Mouse (Mus musculus)"

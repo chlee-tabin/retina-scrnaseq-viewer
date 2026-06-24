@@ -41,7 +41,11 @@ logger = logging.getLogger(__name__)
      Output('nasal-gap-dorsal', 'value', allow_duplicate=True),
      Output('nasal-gap-ventral', 'value', allow_duplicate=True),
      Output('haa-mode', 'value', allow_duplicate=True),
-     Output('sphere-camera-store', 'data', allow_duplicate=True)],
+     Output('sphere-camera-store', 'data', allow_duplicate=True),
+     Output('roi-vertices-store', 'data', allow_duplicate=True),
+     Output('volcano-lfc-thresh', 'value', allow_duplicate=True),
+     Output('volcano-padj-thresh', 'value', allow_duplicate=True),
+     Output('deg-min-cells', 'value', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     prevent_initial_call='initial_duplicate'
@@ -49,7 +53,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 30
+    n_out = 34
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -92,6 +96,14 @@ def initialize_from_url(search, pathname):
         state.get('ng_ventral', no_update),
         state.get('haa_mode', no_update),
         state.get('sphere_cam', no_update),
+        # share_url OMITS these ROI-DEG keys when empty/default, so an absent key in a shared
+        # link means "the sharer had no ROI / defaults" -> restore the DEFAULT (clear / 1.0 /
+        # 0.05 / 50), not no_update, so a link faithfully reproduces the shared state instead of
+        # leaving whatever the recipient already had. (Reached only when a ?state= is present.)
+        state.get('roi', {'A': [], 'B': []}),  # absent -> clear any existing ROI
+        state.get('volcano_lfc', 1.0),
+        state.get('volcano_padj', 0.05),
+        state.get('deg_min_cells', 50),
     )
 
 @callback(
@@ -141,6 +153,10 @@ def initialize_from_url(search, pathname):
      State('nasal-gap-ventral', 'value'),
      State('haa-mode', 'value'),
      State('sphere-camera-store', 'data'),
+     State('roi-vertices-store', 'data'),
+     State('volcano-lfc-thresh', 'value'),
+     State('volcano-padj-thresh', 'value'),
+     State('deg-min-cells', 'value'),
      State('url', 'href')],
     prevent_initial_call=True
 )
@@ -155,7 +171,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
               group_value_source, group_meta,
               ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode, sphere_cam,
-              current_url):
+              roi_verts, volcano_lfc, volcano_padj, deg_min_cells, current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
 
@@ -229,6 +245,27 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
         state_dict['group_value_source'] = group_value_source
         if group_meta:
             state_dict['group_meta'] = group_meta
+
+    # Volcano significance cutoffs -- encoded only when changed from the manuscript defaults
+    # (|log2FC|>1, adj p<0.05) to keep default URLs lean. Additive optional keys.
+    if volcano_lfc is not None and float(volcano_lfc) != 1.0:
+        state_dict['volcano_lfc'] = float(volcano_lfc)
+    if volcano_padj is not None and float(volcano_padj) != 0.05:
+        state_dict['volcano_padj'] = float(volcano_padj)
+    # ROI min-cells floor -- part of the DE run signature, so a shared ROI must carry a
+    # non-default floor or the recipient silently reruns at 50 (different volcano / guard).
+    if deg_min_cells is not None and int(deg_min_cells) != 50:
+        state_dict['deg_min_cells'] = int(deg_min_cells)
+
+    # ROI polygons (the differential-expression setup). Additive optional key -- old
+    # links lack it (restore to no ROI) and older viewers ignore it, so the URL stays
+    # backward compatible. Coords rounded to keep a handful of vertices compact.
+    roi = roi_verts or {}
+    roi_clean = {k: [[round(float(p[0]), 4), round(float(p[1]), 4)]
+                     for p in (roi.get(k) or [])]
+                 for k in ('A', 'B')}
+    if any(roi_clean.values()):
+        state_dict['roi'] = roi_clean
 
     base_url = current_url.split('?')[0]
     url_value = create_share_url(base_url, state_dict)
