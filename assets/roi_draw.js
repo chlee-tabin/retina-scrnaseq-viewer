@@ -10,7 +10,7 @@ window.dash_clientside = window.dash_clientside || {};
 
 (function () {
   var S = { mode: null, verts: { A: [], B: [] }, gd: null, pending: [],
-            onClick: null, onDbl: null };
+            onClick: null, onDbl: null, boundGd: null };
 
   var COL = { A: { line: 'rgba(44,127,184,0.95)', fill: 'rgba(44,127,184,0.15)' },
               B: { line: 'rgba(217,95,14,0.95)',  fill: 'rgba(217,95,14,0.15)' } };
@@ -100,16 +100,31 @@ window.dash_clientside = window.dash_clientside || {};
     if (!S.mode) return;
     evt.preventDefault();
     evt.stopPropagation();
-    S.pending.splice(-2, 2).forEach(function (e) { clearTimeout(e.timer); });
+    // A double-click fires two click events at the same spot. Cancel just the second one and
+    // let the first commit (via its timer, in click order) as the closing vertex -- so
+    // following the displayed "double-click the final vertex" workflow keeps that corner
+    // instead of dropping it. Earlier pending single clicks still commit normally.
+    var dup = S.pending.pop();
+    if (dup) clearTimeout(dup.timer);
     window.dash_clientside.set_props('roi-draw-mode-store', { data: null });   // close
   }
 
   function detach() {
-    if (S.gd && S.onClick) {
-      S.gd.removeEventListener('click', S.onClick, true);
-      S.gd.removeEventListener('dblclick', S.onDbl, true);
+    if (S.boundGd && S.onClick) {
+      S.boundGd.removeEventListener('click', S.onClick, true);
+      S.boundGd.removeEventListener('dblclick', S.onDbl, true);
     }
     S.onClick = S.onDbl = null;
+    S.boundGd = null;
+  }
+
+  // Attach the click / double-click listeners to a graph div, detaching from any previous one.
+  function bindTo(gd) {
+    detach();
+    S.onClick = onClick; S.onDbl = onDbl;
+    S.boundGd = gd;
+    gd.addEventListener('click', S.onClick, true);
+    gd.addEventListener('dblclick', S.onDbl, true);
   }
 
   window.dash_clientside.roi = {
@@ -121,9 +136,7 @@ window.dash_clientside = window.dash_clientside || {};
       var P = plotly();
       if (!S.gd) return '';
       if (S.mode) {
-        S.onClick = onClick; S.onDbl = onDbl;
-        S.gd.addEventListener('click', S.onClick, true);
-        S.gd.addEventListener('dblclick', S.onDbl, true);
+        bindTo(S.gd);
         if (P) P.relayout(S.gd, { dragmode: false });   // clicks place vertices, no box/lasso/zoom
       } else if (P) {
         P.relayout(S.gd, { dragmode: 'zoom' });          // restore normal map interaction on exit
@@ -133,7 +146,14 @@ window.dash_clientside = window.dash_clientside || {};
     // React to external store changes (e.g. the Clear button empties the vertices).
     syncVerts: function (v) {
       S.verts = (v && v.A && v.B) ? v : { A: [], B: [] };
-      if (!S.gd) S.gd = gdEl();
+      var gd = gdEl();
+      if (gd) S.gd = gd;
+      // A map re-render (view / control change) while drawing replaces the Plotly div and
+      // drops our listeners; re-bind to the live div so clicks keep placing vertices.
+      if (S.mode && gd && gd !== S.boundGd) {
+        bindTo(gd);
+        var P = plotly(); if (P) { try { P.relayout(gd, { dragmode: false }); } catch (e) {} }
+      }
       draw();
       return '';
     }
