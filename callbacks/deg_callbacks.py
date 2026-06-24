@@ -129,7 +129,9 @@ def populate_roi_presets(data_store):
     [Output('roi-vertices-store', 'data', allow_duplicate=True),
      Output('roi-draw-mode-store', 'data', allow_duplicate=True),
      Output('custom-x-select', 'value', allow_duplicate=True),
-     Output('custom-y-select', 'value', allow_duplicate=True)],
+     Output('custom-y-select', 'value', allow_duplicate=True),
+     Output('embedding-select', 'value', allow_duplicate=True),
+     Output('custom-projection', 'value', allow_duplicate=True)],
     Input('roi-preset-select', 'value'),
     State('data-store', 'data'),
     prevent_initial_call=True,
@@ -137,10 +139,11 @@ def populate_roi_presets(data_store):
 def load_preset_region(region_name, data_store):
     """Set ROI A to the rectangle of a manuscript area-DEG gate. The gate is an axis-aligned
     range in NT.Score × DV.Score fractions of the data's score range (matches the figure's
-    `gate()` in area_significant_deg.R); reproduces a Fig 6H/S23 panel after Run. Also forces
-    the custom axes back to NT.Score (x) / DV.Score (y) -- the gate is defined in that space,
-    and run_deg_cb tests the polygon against the selected axes, so they must match."""
-    nope = (no_update, no_update, no_update, no_update)
+    `gate()` in area_significant_deg.R); reproduces a Fig 6H/S23 panel after Run. Also switches
+    the map to the raw DV/NT view it is defined in -- custom embedding, raw projection, axes
+    pinned to NT.Score (x) / DV.Score (y) -- so the gate is drawn and run_deg_cb tests it in the
+    right space (otherwise loading a preset on UMAP/flower/sphere can't reproduce the volcano)."""
+    nope = (no_update,) * 6
     if not region_name or not data_store:
         return nope
     spec = {r['name']: r for r in (data_store.get('figure_regions') or [])}.get(region_name)
@@ -158,8 +161,9 @@ def load_preset_region(region_name, data_store):
     y0 = dlo + (dhi - dlo) * di[0] / n
     y1 = dlo + (dhi - dlo) * (di[1] + 1) / n
     rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-    # ROI A = the gate; exit draw mode; pin axes to the gate's NT/DV space.
-    return {'A': rect, 'B': []}, None, 'NT.Score', 'DV.Score'
+    # ROI A = the gate; exit draw mode; show + test it on the raw DV/NT map (custom embedding,
+    # raw projection, NT.Score x / DV.Score y).
+    return {'A': rect, 'B': []}, None, 'NT.Score', 'DV.Score', 'custom_embedding', 'raw'
 
 
 # ---- Run the pseudobulk DE for the drawn ROIs ----
