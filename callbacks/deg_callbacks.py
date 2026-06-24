@@ -41,7 +41,10 @@ def toggle_deg_section(plot_type):
 # ---- Draw-mode buttons: pick which ROI to draw; Clear resets both ----
 @callback(
     [Output('roi-draw-mode-store', 'data', allow_duplicate=True),
-     Output('roi-vertices-store', 'data', allow_duplicate=True)],
+     Output('roi-vertices-store', 'data', allow_duplicate=True),
+     Output('deg-results-store', 'data', allow_duplicate=True),
+     Output('deg-status', 'children', allow_duplicate=True),
+     Output('deg-recap-plot', 'figure', allow_duplicate=True)],
     [Input('roi-draw-a-btn', 'n_clicks'),
      Input('roi-draw-b-btn', 'n_clicks'),
      Input('roi-clear-btn', 'n_clicks')],
@@ -50,10 +53,14 @@ def toggle_deg_section(plot_type):
 def set_draw_mode(a_clicks, b_clicks, clear_clicks):
     trig = ctx.triggered_id
     if trig == 'roi-draw-a-btn':
-        return 'A', no_update
+        return 'A', no_update, no_update, no_update, no_update
     if trig == 'roi-draw-b-btn':
-        return 'B', no_update
-    return None, {'A': [], 'B': []}   # Clear
+        return 'B', no_update, no_update, no_update, no_update
+    # Clear: reset the ROIs AND invalidate any stale DEG result -- emptying
+    # deg-results-store clears the volcano + table (via render_results) and disables the
+    # CSV download; the status + recap are cleared here so nothing dangles for an empty ROI.
+    return (None, {'A': [], 'B': []}, None, '',
+            _message_figure("Cleared. Draw an ROI (or load a figure region) and Run."))
 
 
 # ---- Highlight the active draw button + report vertex counts ----
@@ -87,7 +94,9 @@ def populate_roi_presets(data_store):
 
 @callback(
     [Output('roi-vertices-store', 'data', allow_duplicate=True),
-     Output('roi-draw-mode-store', 'data', allow_duplicate=True)],
+     Output('roi-draw-mode-store', 'data', allow_duplicate=True),
+     Output('custom-x-select', 'value', allow_duplicate=True),
+     Output('custom-y-select', 'value', allow_duplicate=True)],
     Input('roi-preset-select', 'value'),
     State('data-store', 'data'),
     prevent_initial_call=True,
@@ -95,15 +104,18 @@ def populate_roi_presets(data_store):
 def load_preset_region(region_name, data_store):
     """Set ROI A to the rectangle of a manuscript area-DEG gate. The gate is an axis-aligned
     range in NT.Score × DV.Score fractions of the data's score range (matches the figure's
-    `gate()` in area_significant_deg.R); reproduces a Fig 6H/S23 panel after Run."""
+    `gate()` in area_significant_deg.R); reproduces a Fig 6H/S23 panel after Run. Also forces
+    the custom axes back to NT.Score (x) / DV.Score (y) -- the gate is defined in that space,
+    and run_deg_cb tests the polygon against the selected axes, so they must match."""
+    nope = (no_update, no_update, no_update, no_update)
     if not region_name or not data_store:
-        return no_update, no_update
+        return nope
     spec = {r['name']: r for r in (data_store.get('figure_regions') or [])}.get(region_name)
     if not spec:
-        return no_update, no_update
+        return nope
     adata = load_adata(data_store['filename'])
     if not {'NT.Score', 'DV.Score'} <= set(adata.obs.columns):
-        return no_update, no_update
+        return nope
     nt = pd.to_numeric(adata.obs['NT.Score'], errors='coerce')
     dv = pd.to_numeric(adata.obs['DV.Score'], errors='coerce')
     nlo, nhi, dlo, dhi = float(nt.min()), float(nt.max()), float(dv.min()), float(dv.max())
@@ -113,14 +125,15 @@ def load_preset_region(region_name, data_store):
     y0 = dlo + (dhi - dlo) * di[0] / n
     y1 = dlo + (dhi - dlo) * (di[1] + 1) / n
     rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
-    return {'A': rect, 'B': []}, None   # ROI A = the gate; exit any draw mode
+    # ROI A = the gate; exit draw mode; pin axes to the gate's NT/DV space.
+    return {'A': rect, 'B': []}, None, 'NT.Score', 'DV.Score'
 
 
 # ---- Run the pseudobulk DE for the drawn ROIs ----
 @callback(
-    [Output('deg-results-store', 'data'),
-     Output('deg-recap-plot', 'figure'),
-     Output('deg-status', 'children')],
+    [Output('deg-results-store', 'data', allow_duplicate=True),
+     Output('deg-recap-plot', 'figure', allow_duplicate=True),
+     Output('deg-status', 'children', allow_duplicate=True)],
     Input('run-deg-btn', 'n_clicks'),
     [State('roi-vertices-store', 'data'),
      State('data-store', 'data'),

@@ -41,10 +41,6 @@ class DEGError(Exception):
     """Base for expected, user-facing DEG refusals (caught in the callback)."""
 
 
-class NoSelection(DEGError):
-    pass
-
-
 class NoReplicate(DEGError):
     pass
 
