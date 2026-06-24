@@ -36,7 +36,9 @@ logger = logging.getLogger(__name__)
      Output('wm-gap-frac', 'value', allow_duplicate=True),
      Output('wm-pole', 'value', allow_duplicate=True),
      Output('group-value-source', 'value', allow_duplicate=True),
-     Output('roi-vertices-store', 'data', allow_duplicate=True)],
+     Output('roi-vertices-store', 'data', allow_duplicate=True),
+     Output('volcano-lfc-thresh', 'value', allow_duplicate=True),
+     Output('volcano-padj-thresh', 'value', allow_duplicate=True)],
     [Input('url', 'search'),
      Input('url', 'pathname')],
     prevent_initial_call='initial_duplicate'
@@ -44,7 +46,7 @@ logger = logging.getLogger(__name__)
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 25
+    n_out = 27
     triggered_id = ctx.triggered_id
     # Pure pathname navigation (no new shared state): leave controls untouched.
     if triggered_id == 'url.pathname' or not search:
@@ -78,7 +80,9 @@ def initialize_from_url(search, pathname):
         state.get('wm_gap_frac', no_update),
         state.get('wm_pole', no_update),
         state.get('group_value_source', no_update),
-        state.get('roi', no_update),   # restore ROI polygons (drawn once the map renders)
+        state.get('roi', no_update),         # restore ROI polygons (drawn once the map renders)
+        state.get('volcano_lfc', no_update), # absent -> keep the layout default (1.0)
+        state.get('volcano_padj', no_update),# absent -> keep the layout default (0.05)
     )
 
 @callback(
@@ -123,6 +127,8 @@ def initialize_from_url(search, pathname):
      State('group-value-source', 'value'),
      State('group-meta-select', 'value'),
      State('roi-vertices-store', 'data'),
+     State('volcano-lfc-thresh', 'value'),
+     State('volcano-padj-thresh', 'value'),
      State('url', 'href')],
     prevent_initial_call=True
 )
@@ -136,7 +142,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
               wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
               wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
               group_value_source, group_meta,
-              roi_verts, current_url):
+              roi_verts, volcano_lfc, volcano_padj, current_url):
     if n_clicks is None:
         return {'display': 'none'}, ''
 
@@ -198,6 +204,13 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
         state_dict['group_value_source'] = group_value_source
         if group_meta:
             state_dict['group_meta'] = group_meta
+
+    # Volcano significance cutoffs -- encoded only when changed from the manuscript defaults
+    # (|log2FC|>1, adj p<0.05) to keep default URLs lean. Additive optional keys.
+    if volcano_lfc is not None and float(volcano_lfc) != 1.0:
+        state_dict['volcano_lfc'] = float(volcano_lfc)
+    if volcano_padj is not None and float(volcano_padj) != 0.05:
+        state_dict['volcano_padj'] = float(volcano_padj)
 
     # ROI polygons (the differential-expression setup). Additive optional key -- old
     # links lack it (restore to no ROI) and older viewers ignore it, so the URL stays
