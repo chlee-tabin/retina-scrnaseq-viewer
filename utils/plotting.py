@@ -763,9 +763,20 @@ def _orientation_labels(sx, sy, sz, haa_xyz=None):
     return traces
 
 
+def _haa_caption(fig, haa_xyz, haa_marker):
+    """Add a small footnote spelling out the HAA landmark's definition (only when an HAA is
+    actually drawn), so the crimson diamond isn't an unexplained mark."""
+    if haa_xyz is not None and haa_marker:
+        fig.add_annotation(
+            text=f"◆ HAA = median DV/NT position of {haa_marker}⁺ cells",
+            xref='paper', yref='paper', x=0.0, y=0.0, xanchor='left', yanchor='bottom',
+            showarrow=False, font=dict(size=11, color='#c1121f'))
+    return fig
+
+
 def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
                          treat_as_categorical=False, color_map=None, category_order=None,
-                         haa_xyz=None):
+                         haa_xyz=None, haa_marker=None):
     """3D spherical view of the whole-mount map: each cell a point on the unit sphere
     (utils.wholemount.sphere_coords), the native near-spherical geometry the flat flower
     projects. A faint reference sphere gives the cap its curvature; captured cells form a
@@ -803,7 +814,7 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
     fig.add_trace(_reference_globe())
     fig.add_traces(_orientation_labels(x, y, z, haa_xyz=haa_xyz))
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D)'))
-    return fig
+    return _haa_caption(fig, haa_xyz, haa_marker)
 
 
 def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
@@ -867,7 +878,7 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
 def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
                                 smooth_sigma=0, min_cells=1, color_floor=0.05,
                                 bin_stat='mean', color_label='expression', params=None,
-                                haa_xyz=None):
+                                haa_xyz=None, haa_marker=None):
     """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
 
     Identical score-grid binning to create_wholemount_binned_figure, but the grid VERTICES
@@ -901,13 +912,13 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
     for t in traces:
         fig.add_trace(t)
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D, score-space binned)'))
-    return fig
+    return _haa_caption(fig, haa_xyz, haa_marker)
 
 
 def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bin_size=50,
                                    percentile=0.95, smooth_sigma=0, min_cells=1,
                                    color_floor=0.05, shared_scale=False, bin_stat='mean',
-                                   params=None, haa_xyz=None):
+                                   params=None, haa_xyz=None, haa_marker=None):
     """Two genes side-by-side on the sphere: two 3D scenes, each the same points/binned
     sphere as the single-gene views (reusing _reference_globe / _orientation_labels /
     _sphere_binned_traces). Each gene gets its OWN colour scale by default so a weak gene is
@@ -971,7 +982,7 @@ def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bi
     fig.update_layout(title='Whole-mount sphere (3D) — gene comparison', plot_bgcolor='white',
                       height=700, margin=dict(t=80, l=0, r=0, b=0), uirevision='wholemount-sphere',
                       scene=scene_cfg, scene2=dict(scene_cfg))
-    return fig
+    return _haa_caption(fig, haa_xyz, haa_marker)
 
 
 def create_group_expression_plot(df, gene, group_by, split_by=None, style='violin',

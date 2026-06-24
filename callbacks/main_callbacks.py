@@ -470,7 +470,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     binned=binning_on, bin_size=bin_number, percentile=percentile,
                     smooth_sigma=smooth_sigma, min_cells=mc, color_floor=cf,
                     shared_scale=shared, bin_stat=(bin_stat or 'mean'), params=proj_params,
-                    haa_xyz=haa_xyz,
+                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
                 ), sphere_cam)
             if custom_projection == 'flower' and binning_on:
                 # Faithful score-space binned flower per panel (matches the single-gene
@@ -537,7 +537,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     min_cells=data_store.get('min_cells_per_bin', 1),
                     color_floor=data_store.get('color_floor', 0.05),
                     bin_stat=(bin_stat or 'mean'), color_label=cl, params=proj_params,
-                    haa_xyz=haa_xyz,
+                    haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
                 ), sphere_cam)
             s_cmap, s_corder = _annotation_style(data_store, color_by)
             return _apply_sphere_camera(create_sphere_figure(
@@ -545,7 +545,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 color_series, color_by, gene=gene,
                 treat_as_categorical=treat_as_categorical,
                 color_map=s_cmap, category_order=s_corder,
-                haa_xyz=haa_xyz,
+                haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'),
             ), sphere_cam)
 
         # Create DataFrame for plotting

@@ -5,7 +5,7 @@ from components.sidebar.control_panel import create_control_panel
 
 # Viewer version (bump on each released change) + manuscript preprint link, shown at
 # the top of the sidebar.
-VIEWER_VERSION = "0.21"
+VIEWER_VERSION = "0.22"
 PREPRINT_URL = "https://www.biorxiv.org/content/10.64898/2026.01.04.697548v1"
 
 def create_sidebar():
