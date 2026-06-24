@@ -63,6 +63,30 @@ def set_draw_mode(a_clicks, b_clicks, clear_clicks):
             _message_figure("Cleared. Draw an ROI (or load a figure region) and Run."))
 
 
+# ---- Invalidate stale results when the ROI changes (freehand draw, preset, URL restore) ----
+# The vertices store is also written by the JS draw tool and the preset loader, neither of
+# which goes through set_draw_mode -- so after a run, editing the polygon would leave the old
+# volcano/table/CSV on screen describing a region the map no longer shows. Clear them here, the
+# one place every vertex change routes through. Guarded so it only fires when there are results
+# to clear and the ROI is non-empty (Clear is already handled above; a fresh URL restore has
+# nothing stale to drop).
+@callback(
+    [Output('deg-results-store', 'data', allow_duplicate=True),
+     Output('deg-status', 'children', allow_duplicate=True),
+     Output('deg-recap-plot', 'figure', allow_duplicate=True)],
+    Input('roi-vertices-store', 'data'),
+    State('deg-results-store', 'data'),
+    prevent_initial_call=True,
+)
+def invalidate_on_roi_change(verts, results):
+    verts = verts or {}
+    has_roi = any(verts.get(k) for k in ('A', 'B'))
+    if not results or not has_roi:
+        raise PreventUpdate
+    return (None, '',
+            _message_figure("ROI changed — click Run to recompute differential expression."))
+
+
 # ---- Highlight the active draw button + report vertex counts ----
 @callback(
     [Output('roi-draw-a-btn', 'outline'),
@@ -149,10 +173,15 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
     if not n_clicks or not data_store:
         return no_update, no_update, no_update
     try:
-        if embedding != 'custom_embedding' or projection == 'flower':
+        # ROI selection is point-in-polygon on the raw DV/NT score axes, so it is only valid
+        # on the custom embedding in raw mode. Reject anything else -- UMAP, and every
+        # whole-mount projection (flower, sphere, ...), where the on-screen coords are warped
+        # away from custom_x/custom_y. Gating on "not raw" (rather than naming each projection)
+        # keeps any future projection rejected by default.
+        if embedding != 'custom_embedding' or projection not in (None, 'raw'):
             return None, _message_figure(""), dbc.Alert(
                 "Draw ROIs on the topographic DV/NT view (custom embedding, raw axes). "
-                "UMAP and the whole-mount projection are not supported yet.", color="warning")
+                "UMAP and the whole-mount projections are not supported yet.", color="warning")
         if not custom_x or not custom_y:
             return None, _message_figure(""), dbc.Alert(
                 "Select the X / Y axes for the custom embedding first.", color="warning")
