@@ -23,10 +23,6 @@ LEGACY_SMOOTH_SIGMA = {
     'mouse_rpc_legacy': 2.0,
 }
 
-# Slider domain; an externally-supplied (URL) sigma is clamped to this.
-SIGMA_MIN, SIGMA_MAX = 0.0, 4.0
-
-
 def _coerce_sigma(value, fallback):
     """Clamp an externally-supplied sigma to the slider's [0, 4] domain.
 
@@ -35,7 +31,7 @@ def _coerce_sigma(value, fallback):
     falling back to ``fallback`` when it is not numeric at all.
     """
     try:
-        return min(SIGMA_MAX, max(SIGMA_MIN, float(value)))
+        return min(4.0, max(0.0, float(value)))  # slider domain
     except (TypeError, ValueError):
         return fallback
 
