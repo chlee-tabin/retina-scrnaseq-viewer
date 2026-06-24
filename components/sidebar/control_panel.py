@@ -87,7 +87,7 @@ def create_control_panel():
                             # reviewer figure; every knob feeds wholemount.flower_transform.
                             html.Div([
                                 html.Hr(className="my-2"),
-                                html.Label("Advanced projection", className="fw-semibold small"),
+                                html.Label("Experimental projection", className="fw-semibold small"),
                                 # Geometry knobs (inherit DEFAULT_PARAMS; every default below
                                 # reproduces Fig R2.5). The controls in THIS group shape both the
                                 # flat flower AND the 3D sphere (they set the spherical-cap angle,

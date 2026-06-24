@@ -713,20 +713,26 @@ def _reference_globe():
 
 
 def _sphere_layout(title):
-    """Common layout for the sphere figures: white bg, hidden axes, equal aspect, face-on cam."""
+    """Common layout for the sphere figures: white bg, hidden axes, equal aspect, face-on cam.
+    `scene.uirevision` is a constant so a user's rotation/zoom PERSISTS across re-renders (gene
+    or colour changes) instead of snapping back to the default camera; the default camera only
+    applies on the first render (before any interaction)."""
     return dict(
         title=title, plot_bgcolor='white', height=800, margin=dict(t=60, l=0, r=0, b=0),
-        scene=dict(aspectmode='data',
+        uirevision='wholemount-sphere',
+        scene=dict(aspectmode='data', uirevision='wholemount-sphere',
                    xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
                    camera=_SPHERE_CAMERA))
 
 
-def _orientation_labels(sx, sy, sz):
+def _orientation_labels(sx, sy, sz, haa_xyz=None):
     """Cardinal anatomical-direction labels so the 3D view is readable (the axes are hidden):
-    nasal +x, dorsal +y, temporal -x, ventral -y, HAA at the pole. Each label floats just
-    beyond the data's rim in its direction (95th-pct colatitude there) and is lifted off the
-    unit sphere so the coloured cap doesn't occlude it. Text labels billboard to the camera,
-    so they stay legible as the user rotates."""
+    nasal +x, dorsal +y, temporal -x, ventral -y. Each floats just beyond the data rim in its
+    direction (95th-pct colatitude there) and is lifted off the unit sphere so the cap doesn't
+    occlude it; text billboards to the camera. The HAA landmark is dataset-specific: drawn (a
+    crimson diamond + 'HAA') only when `haa_xyz` is given -- e.g. the median position of chick
+    CYP26C1+ cells -- so human/mouse, which configure no marker, get NO HAA label. The HAA sits
+    at the marker's actual location, not the score-origin pole. Returns a LIST of traces."""
     sx = np.asarray(sx, dtype=float); sy = np.asarray(sy, dtype=float); sz = np.asarray(sz, dtype=float)
     m = np.isfinite(sx) & np.isfinite(sy) & np.isfinite(sz)
     sx, sy, sz = sx[m], sy[m], sz[m]
@@ -744,14 +750,22 @@ def _orientation_labels(sx, sy, sz):
             ly.append(R * np.sin(rr) * np.sin(t))
             lz.append(R * np.cos(rr))
             lt.append(name)
-    lx.append(0.0); ly.append(0.0); lz.append(R); lt.append('HAA')   # pole / cap centre
-    return go.Scatter3d(
+    traces = [go.Scatter3d(
         x=lx, y=ly, z=lz, mode='text', text=lt,
-        textfont=dict(size=13, color='#222'), hoverinfo='skip', showlegend=False)
+        textfont=dict(size=13, color='#222'), hoverinfo='skip', showlegend=False)]
+    if haa_xyz is not None:
+        traces.append(go.Scatter3d(
+            x=[R * haa_xyz[0]], y=[R * haa_xyz[1]], z=[R * haa_xyz[2]],
+            mode='markers+text', text=['HAA'], textposition='top center',
+            textfont=dict(size=13, color='#c1121f'),
+            marker=dict(size=5, color='#c1121f', symbol='diamond'),
+            hoverinfo='skip', showlegend=False))
+    return traces
 
 
 def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
-                         treat_as_categorical=False, color_map=None, category_order=None):
+                         treat_as_categorical=False, color_map=None, category_order=None,
+                         haa_xyz=None):
     """3D spherical view of the whole-mount map: each cell a point on the unit sphere
     (utils.wholemount.sphere_coords), the native near-spherical geometry the flat flower
     projects. A faint reference sphere gives the cap its curvature; captured cells form a
@@ -787,7 +801,7 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
     fig = px.scatter_3d(df, x='x', y='y', z='z', color='color', **px_kwargs)
     fig.update_traces(marker=dict(size=2.5, opacity=0.85), selector=dict(type='scatter3d'))
     fig.add_trace(_reference_globe())
-    fig.add_trace(_orientation_labels(x, y, z))
+    fig.add_traces(_orientation_labels(x, y, z, haa_xyz=haa_xyz))
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D)'))
     return fig
 
@@ -852,7 +866,8 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
 
 def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
                                 smooth_sigma=0, min_cells=1, color_floor=0.05,
-                                bin_stat='mean', color_label='expression', params=None):
+                                bin_stat='mean', color_label='expression', params=None,
+                                haa_xyz=None):
     """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
 
     Identical score-grid binning to create_wholemount_binned_figure, but the grid VERTICES
@@ -882,7 +897,7 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
     fig = go.Figure()
     fig.add_trace(_reference_globe())
     csx, csy, csz = wm.sphere_coords(dv, nt, params=P)   # cell coords -> direction labels
-    fig.add_trace(_orientation_labels(csx, csy, csz))
+    fig.add_traces(_orientation_labels(csx, csy, csz, haa_xyz=haa_xyz))
     for t in traces:
         fig.add_trace(t)
     fig.update_layout(**_sphere_layout('Whole-mount sphere (3D, score-space binned)'))
@@ -892,7 +907,7 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
 def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bin_size=50,
                                    percentile=0.95, smooth_sigma=0, min_cells=1,
                                    color_floor=0.05, shared_scale=False, bin_stat='mean',
-                                   params=None):
+                                   params=None, haa_xyz=None):
     """Two genes side-by-side on the sphere: two 3D scenes, each the same points/binned
     sphere as the single-gene views (reusing _reference_globe / _orientation_labels /
     _sphere_binned_traces). Each gene gets its OWN colour scale by default so a weak gene is
@@ -928,7 +943,8 @@ def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bi
     for idx, (v, name) in enumerate(zip(vals_list, names)):
         col = idx + 1
         fig.add_trace(_reference_globe(), row=1, col=col)
-        fig.add_trace(_orientation_labels(csx, csy, csz), row=1, col=col)
+        for t in _orientation_labels(csx, csy, csz, haa_xyz=haa_xyz):
+            fig.add_trace(t, row=1, col=col)
         if binned:
             traces, _ = _sphere_binned_traces(
                 dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
@@ -948,11 +964,13 @@ def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bi
                                           x=cbx[idx], len=0.85, thickness=12)),
                 hoverinfo='skip', showlegend=False), row=1, col=col)
 
-    scene_cfg = dict(aspectmode='data', xaxis=dict(visible=False), yaxis=dict(visible=False),
+    # uirevision (constant) keeps each panel's rotation/zoom across gene/colour re-renders.
+    scene_cfg = dict(aspectmode='data', uirevision='wholemount-sphere',
+                     xaxis=dict(visible=False), yaxis=dict(visible=False),
                      zaxis=dict(visible=False), camera=_SPHERE_CAMERA)
     fig.update_layout(title='Whole-mount sphere (3D) — gene comparison', plot_bgcolor='white',
-                      height=700, margin=dict(t=80, l=0, r=0, b=0),
-                      scene=scene_cfg, scene2=scene_cfg)
+                      height=700, margin=dict(t=80, l=0, r=0, b=0), uirevision='wholemount-sphere',
+                      scene=scene_cfg, scene2=dict(scene_cfg))
     return fig
 
 

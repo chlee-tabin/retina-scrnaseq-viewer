@@ -1,4 +1,4 @@
-from dash import Input, Output, State, callback
+from dash import Input, Output, State, callback, clientside_callback
 from utils.data_loading import load_adata, load_dataset_config, gene_search_options
 from utils.plotting import (
     create_scatter_plot,
@@ -32,6 +32,53 @@ def _gene_vector(adata, gene):
     if scipy.sparse.issparse(sub):
         return sub.toarray().flatten()
     return np.asarray(sub).flatten()
+
+
+def _haa_landmark(adata, dv, nt, proj_params, marker):
+    """(x, y, z) on the sphere for the HAA landmark = the median topographic position of the
+    dataset's HAA marker's expressing cells (chick: CYP26C1, set per-dataset in
+    datasets_config.yml). Returns None when no marker is configured, the marker is absent, or
+    too few cells express it -- so human/mouse (no marker) show no HAA label."""
+    if not marker or marker not in adata.var_names:
+        return None
+    pos = np.asarray(_gene_vector(adata, marker)) > 0
+    if int(np.count_nonzero(pos)) < 5:
+        return None
+    mdv = float(np.nanmedian(np.asarray(dv)[pos]))
+    mnt = float(np.nanmedian(np.asarray(nt)[pos]))
+    hx, hy, hz = wholemount.sphere_coords(np.array([mdv]), np.array([mnt]), params=proj_params)
+    return (float(hx[0]), float(hy[0]), float(hz[0]))
+
+
+# Persist the user's 3D-sphere rotation across re-renders. dcc.Graph's uirevision does NOT
+# reliably hold the 3D camera (an explicit scene.camera in each new figure overrides it), so
+# instead a clientside callback captures the camera from the plot's relayoutData into a Store,
+# and update_plot re-applies it (via _apply_sphere_camera) on every sphere render.
+clientside_callback(
+    """
+    function(relayoutData, stored) {
+        if (!relayoutData) { return window.dash_clientside.no_update; }
+        var cam = relayoutData['scene.camera'] || relayoutData['scene2.camera'];
+        return cam ? cam : window.dash_clientside.no_update;
+    }
+    """,
+    Output('sphere-camera-store', 'data'),
+    Input('main-plot', 'relayoutData'),
+    State('sphere-camera-store', 'data'),
+    prevent_initial_call=True,
+)
+
+
+def _apply_sphere_camera(fig, cam):
+    """Override the sphere scene camera(s) with the user's stored camera so a rotation persists
+    across gene/colour changes. No-op when `cam` is falsy (first render keeps the default
+    face-on camera). Sets scene2 too only when the figure actually has a second scene (dual)."""
+    if not cam:
+        return fig
+    fig.update_layout(scene_camera=cam)
+    if any(getattr(t, 'scene', None) == 'scene2' for t in fig.data):
+        fig.update_layout(scene2_camera=cam)
+    return fig
 
 
 def _on(value):
@@ -206,6 +253,7 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
      Input('wm-gap-mode', 'value'),
      Input('wm-gap-frac', 'value'),
      Input('wm-pole', 'value')],
+    State('sphere-camera-store', 'data'),
     prevent_initial_call=True
 )
 @handle_callback_error
@@ -217,7 +265,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 group_positive_only, group_replicate, compare_shared_scale,
                 custom_projection, wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
                 group_value_source, group_meta,
-                wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole):
+                wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
+                sphere_cam):
     logger.debug("update_plot called with parameters:")
 
     # Initialize treat_as_categorical as False by default
@@ -336,6 +385,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         embedding_label = embedding
         proj_params = None   # whole-mount transform params (None unless the flower view)
         sphere_xyz = None    # (x, y, z) on the unit sphere when the 3D projection is active
+        haa_xyz = None       # HAA landmark position on the sphere (dataset-specific marker)
         if embedding == 'custom_embedding':
             if custom_projection in ('flower', 'sphere'):
                 # Whole-mount reprojection of the DV/NT topographic scores: the flat "flower"
@@ -367,6 +417,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     # x/y are placeholders for the shared DataFrame / compare guards.
                     sphere_xyz = wholemount.sphere_coords(dv_cells, nt_cells, params=proj_params)
                     x, y = sphere_xyz[0], sphere_xyz[1]
+                    haa_xyz = _haa_landmark(adata, dv_cells, nt_cells, proj_params,
+                                            data_store.get('haa_marker'))
                 else:
                     # Per-cell warp (used by the scatter + dual-gene views; the binned view
                     # re-bins in score space below for a stray-free, faithful map).
@@ -413,12 +465,13 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
             shared = _on(compare_shared_scale)
             if sphere_xyz is not None:
                 # Two genes on side-by-side 3D spheres (points or binned mesh per panel).
-                return create_dual_gene_sphere_figure(
+                return _apply_sphere_camera(create_dual_gene_sphere_figure(
                     dv_cells, nt_cells, [v1, v2], [gene, gene2],
                     binned=binning_on, bin_size=bin_number, percentile=percentile,
                     smooth_sigma=smooth_sigma, min_cells=mc, color_floor=cf,
                     shared_scale=shared, bin_stat=(bin_stat or 'mean'), params=proj_params,
-                )
+                    haa_xyz=haa_xyz,
+                ), sphere_cam)
             if custom_projection == 'flower' and binning_on:
                 # Faithful score-space binned flower per panel (matches the single-gene
                 # binned flower), instead of histogramming the warped per-cell coordinates.
@@ -478,20 +531,22 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 smooth_sigma = float(data_store.get('smooth_sigma', 0) or 0) if smooth_on else 0
                 base = gene if color_by == 'gene_expression' else str(color_by)
                 cl = f"{base} (% detected)" if bin_stat == 'frac_pos' else base
-                return create_sphere_binned_figure(
+                return _apply_sphere_camera(create_sphere_binned_figure(
                     dv_cells, nt_cells, np.asarray(color_series, dtype=float),
                     bin_size=bin_number, percentile=percentile, smooth_sigma=smooth_sigma,
                     min_cells=data_store.get('min_cells_per_bin', 1),
                     color_floor=data_store.get('color_floor', 0.05),
                     bin_stat=(bin_stat or 'mean'), color_label=cl, params=proj_params,
-                )
+                    haa_xyz=haa_xyz,
+                ), sphere_cam)
             s_cmap, s_corder = _annotation_style(data_store, color_by)
-            return create_sphere_figure(
+            return _apply_sphere_camera(create_sphere_figure(
                 sphere_xyz[0], sphere_xyz[1], sphere_xyz[2],
                 color_series, color_by, gene=gene,
                 treat_as_categorical=treat_as_categorical,
                 color_map=s_cmap, category_order=s_corder,
-            )
+                haa_xyz=haa_xyz,
+            ), sphere_cam)
 
         # Create DataFrame for plotting
         df = pd.DataFrame({

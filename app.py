@@ -313,6 +313,9 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             # per-type colours + biological order), and the pseudobulk replicate
             # unit -- all optional, all from datasets_config.yml.
             'default_gene': dataset.get('default_gene'),
+            # Optional marker whose expressing cells' median position marks the HAA
+            # landmark on the 3D sphere (chick: CYP26C1). Absent -> no HAA label.
+            'haa_marker': dataset.get('haa_marker'),
             'annotation_column': dataset.get('annotation_column'),
             'annotation_order': dataset.get('annotation_order', []),
             'annotation_colors': dataset.get('annotation_colors', {}),
