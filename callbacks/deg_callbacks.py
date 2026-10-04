@@ -3,7 +3,8 @@
 The user draws one or two polygon ROIs directly on the spatial map (assets/roi_draw.js
 captures clicks -> data coords, double-click closes, mirrors vertices into
 roi-vertices-store). "Run" selects cells by point-in-polygon on the embedding's axes and
-runs a negative-binomial pseudobulk DE (pydeseq2) over the demux replicate unit. Results
+runs a negative-binomial pseudobulk DE (pydeseq2) over the dataset's configured replicate
+columns (chick: library × genotype; human/mouse: library). Results
 drive the volcano, a sortable table, a resolved-selection recap, and a CSV download.
 
 Selection is point-in-polygon in score space, NOT Plotly point selection -- so the ROI
@@ -21,7 +22,8 @@ from dash.exceptions import PreventUpdate
 from dash.dash_table.Format import Format, Scheme
 import dash_bootstrap_components as dbc
 
-from utils.data_loading import load_adata
+from utils.data_loading import load_dataset_state, get_dataset_config
+from utils.validation import coerce_control, coerce_roi
 from utils.plotting import _message_figure
 from utils.deg import (
     resolve_rois, polygon_to_indices, deg_from_labels,
@@ -120,7 +122,8 @@ def invalidate_stale_results(verts, data_store, min_cells, custom_x, custom_y,
 def invalidate_on_unsupported_view(color_by, enable_binning, results, data_store):
     if not results:
         raise PreventUpdate
-    col_types = (data_store or {}).get('column_types', {})
+    _, settings = load_dataset_state(data_store)
+    col_types = settings.get('column_types', {})
     categorical = (color_by and color_by != 'gene_expression'
                    and col_types.get(color_by) == 'categorical')
     if _on(enable_binning) and categorical:
@@ -139,7 +142,7 @@ def invalidate_on_unsupported_view(color_by, enable_binning, results, data_store
      Input('roi-vertices-store', 'data')],
 )
 def draw_state(mode, verts):
-    verts = verts or {}
+    verts = coerce_roi(verts)
     na, nb = len(verts.get('A') or []), len(verts.get('B') or [])
     if mode:
         msg = (f"Drawing ROI {mode} — click to add vertices, double-click to close. "
@@ -155,7 +158,8 @@ def draw_state(mode, verts):
     Input('data-store', 'data'),
 )
 def populate_roi_presets(data_store):
-    regions = (data_store or {}).get('figure_regions') or []
+    dataset = get_dataset_config((data_store or {}).get('dataset_id')) or {}
+    regions = dataset.get('figure_regions') or []
     return [{'label': r['name'], 'value': r['name']} for r in regions]
 
 
@@ -186,10 +190,12 @@ def load_preset_region(region_name, data_store):
     clear = ({'A': [], 'B': []}, None, no_update, no_update, no_update, no_update)
     if not region_name or not data_store:
         return nope
+    adata, data_store = load_dataset_state(data_store)
+    if adata is None:
+        return clear
     spec = {r['name']: r for r in (data_store.get('figure_regions') or [])}.get(region_name)
     if not spec:
         return clear   # preset not defined for this dataset (after a switch) -> drop stale gate
-    adata = load_adata(data_store['filename'])
     if not {'NT.Score', 'DV.Score'} <= set(adata.obs.columns):
         return clear
     nt = pd.to_numeric(adata.obs['NT.Score'], errors='coerce')
@@ -219,11 +225,12 @@ def _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, 
     that run_deg_cb refuses, so any result is invalid there -- including one whose run finished
     after the switch. A benign recolour between DE-capable views leaves it False (result kept),
     so colour/binning are captured only through this derived bit, not raw."""
-    col_types = (data_store or {}).get('column_types', {})
+    _, settings = load_dataset_state(data_store)
+    col_types = settings.get('column_types', {})
     faceted = bool(_on(enable_binning) and color_by and color_by != 'gene_expression'
                    and col_types.get(color_by) == 'categorical')
-    payload = {'verts': verts or {}, 'file': (data_store or {}).get('filename'),
-               'min_cells': int(min_cells or 50), 'x': custom_x, 'y': custom_y,
+    payload = {'verts': coerce_roi(verts), 'dataset': settings.get('dataset_id'),
+               'min_cells': coerce_control('deg_min_cells', min_cells), 'x': custom_x, 'y': custom_y,
                'embedding': embedding, 'projection': projection, 'faceted': faceted}
     return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -269,7 +276,9 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
             return None, _message_figure(""), dbc.Alert(
                 "Select the X / Y axes for the custom embedding first.", color="warning")
 
-        adata = load_adata(data_store['filename'])
+        adata, data_store = load_dataset_state(data_store)
+        if adata is None:
+            return None, _message_figure(""), dbc.Alert("Unknown dataset.", color="warning")
         if custom_x not in adata.obs.columns or custom_y not in adata.obs.columns:
             return None, _message_figure(""), dbc.Alert(
                 "The selected axes are not present in this dataset.", color="warning")
@@ -287,7 +296,7 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
 
         xs = pd.to_numeric(adata.obs[custom_x], errors='coerce').to_numpy()
         ys = pd.to_numeric(adata.obs[custom_y], errors='coerce').to_numpy()
-        verts = verts or {}
+        verts = coerce_roi(verts)
         idx_a = polygon_to_indices(verts.get('A'), xs, ys)
         idx_b = polygon_to_indices(verts.get('B'), xs, ys)
         labels, sel_info = resolve_rois(idx_a, idx_b, adata.n_obs)
@@ -298,7 +307,7 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         recap = create_recap_figure(xs, ys, labels, sel_info['mode'],
                                     x_label=custom_x, y_label=custom_y,
                                     foreground_label=sel_info.get('solo', 'A'))
-        min_cells = int(min_cells or 50)
+        min_cells = coerce_control('deg_min_cells', min_cells)
         # Tag the slow-path (post-deg_from_labels) error outputs with the run signature too, so
         # gate_recap_status can drop a late error that finished after the user changed inputs --
         # otherwise a stale "too few replicates"/recap lingers on the new view. No records, so the
@@ -312,12 +321,13 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
                 norm_target=data_store.get('x_norm_target'))
         except NoReplicate:
             return err, recap, dbc.Alert(
-                "This dataset has no configured replicate unit (e.g. library × genotype), "
+                "This dataset has no usable configured replicate columns, "
                 "so a pseudobulk test is not possible here.", color="warning")
         except InsufficientReplicates as e:
             return err, recap, dbc.Alert(
                 f"Too few pseudobulk replicates ≥ {e.min_cells} cells per side "
-                f"(A: {e.n_a}, B: {e.n_b}). Draw a larger ROI, or lower the min-cells floor.",
+                f"(A: {e.n_a}, B: {e.n_b}). Draw a larger ROI, or lower the min-cells floor. "
+                f"{getattr(e, 'n_excluded_replicate', 0):,} cells excluded for missing replicate labels.",
                 color="warning")
         except DEGError as e:
             return err, recap, dbc.Alert(str(e), color="warning")
@@ -347,6 +357,7 @@ def _status(info, min_cells):
         html.B(f"{mode}. "),
         f"{info['n_A']:,} {fg} / {info['n_B']:,} {bg} cells{overlap}. ",
         f"Pseudobulks ≥ {min_cells} cells: {info['n_pb_A']} {fg} / {info['n_pb_B']} {bg}. ",
+        f"{info.get('n_excluded_replicate', 0):,} cells excluded for missing replicate labels. ",
         f"Design {info['design']} ({info['design_reason']}). ",
         f"{info['n_genes_tested']:,} genes tested.",
     ], color="info", className="py-2 mb-1")
@@ -385,8 +396,8 @@ def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells
     for c in ('baseMean', 'log2FoldChange', 'pvalue', 'padj'):
         if c in res:
             res[c] = pd.to_numeric(res[c], errors='coerce')  # None (from the store) -> NaN
-    lfc_t = float(lfc_thresh) if lfc_thresh not in (None, '') else 1.0
-    padj_t = float(padj_thresh) if padj_thresh not in (None, '') else 0.05
+    lfc_t = coerce_control('volcano_lfc', lfc_thresh)
+    padj_t = coerce_control('volcano_padj', padj_thresh)
     fig = create_volcano_figure(res, lfc_thresh=lfc_t, padj_thresh=padj_t,
                                 foreground_label=stored.get('solo', 'A'))
 

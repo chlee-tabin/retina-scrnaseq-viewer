@@ -5,6 +5,8 @@ datasets_config.yml is just its default. Kept here -- pure, no Dash/data deps --
 the backward-compat resolution is unit-testable without importing the Dash app.
 """
 
+import math
+
 # Share-state schema version at which the smoothing slider was introduced. A shared
 # link stamped below this (or with no version at all = a pre-slider v2 link) predates
 # the slider, so its smoothing was the fixed per-dataset config value of the day --
@@ -31,8 +33,13 @@ def _coerce_sigma(value, fallback):
     falling back to ``fallback`` when it is not numeric at all.
     """
     try:
-        return min(4.0, max(0.0, float(value)))  # slider domain
-    except (TypeError, ValueError):
+        if isinstance(value, bool):
+            return fallback
+        if isinstance(value, int):
+            return float(min(4, max(0, value)))
+        sigma = float(value)
+        return min(4.0, max(0.0, sigma)) if math.isfinite(sigma) else fallback
+    except (TypeError, ValueError, OverflowError):
         return fallback
 
 
@@ -46,7 +53,11 @@ def resolve_smooth_sigma(state, dataset_id, config_default):
     """
     if state is not None and 'smooth_sigma' in state:
         return _coerce_sigma(state['smooth_sigma'], config_default)
-    if state is not None and state.get('v', 2) < SLIDER_SCHEMA_VERSION:
+    try:
+        version = float(state.get('v', 2)) if state is not None else SLIDER_SCHEMA_VERSION
+    except (TypeError, ValueError, OverflowError):
+        version = SLIDER_SCHEMA_VERSION
+    if state is not None and version < SLIDER_SCHEMA_VERSION:
         # Pre-slider link (no sigma key, older schema) -> what it rendered with then.
         return LEGACY_SMOOTH_SIGMA.get(dataset_id, 1.5)
     return config_default

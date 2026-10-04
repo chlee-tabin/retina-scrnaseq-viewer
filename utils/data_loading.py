@@ -2,6 +2,10 @@ import os
 import anndata as ad
 import logging
 import yaml
+import threading
+import numpy as np
+import scipy.sparse as sp
+from utils.validation import obs_column_types
 from pathlib import Path
 from functools import lru_cache
 
@@ -29,7 +33,7 @@ def resolve_data_path(file_path):
 
 
 @lru_cache(maxsize=2)
-def load_adata(filename):
+def _cached_load_adata(filename):
     # Provision the file on first access (no-op if already on disk or if
     # HF_DATA_REPO is unset). Lets the app start without blocking on downloads;
     # the dataset is fetched the moment it is actually selected.
@@ -43,6 +47,38 @@ def load_adata(filename):
     adata = ad.read_h5ad(resolved)
     logger.info(f"Successfully loaded {resolved} with {adata.n_obs} cells")
     return adata
+
+_load_locks = {}
+_load_locks_guard = threading.Lock()
+
+
+def configured_file_paths():
+    return {ds['file_path'] for ds in load_dataset_config()['datasets'].values()}
+
+
+def get_dataset_config(dataset_id):
+    """Resolve identity/settings only from the server's configuration."""
+    if not isinstance(dataset_id, str):
+        return None
+    return load_dataset_config()['datasets'].get(dataset_id)
+
+
+def load_adata(filename):
+    if not isinstance(filename, str) or filename not in configured_file_paths():
+        raise ValueError('Unknown dataset file.')
+    with _load_locks_guard:
+        lock = _load_locks.setdefault(filename, threading.Lock())
+    # Lookup the LRU after acquiring the file lock: a concurrent cold miss rechecks
+    # the populated cache rather than reading again. Other files load independently.
+    with lock:
+        return _cached_load_adata(filename)
+
+
+# Preserve the public cache introspection/invalidation API and maxsize=2 semantics.
+load_adata.cache_clear = _cached_load_adata.cache_clear
+load_adata.cache_info = _cached_load_adata.cache_info
+load_adata.cache_parameters = _cached_load_adata.cache_parameters
+
 
 def load_dataset_config(config_path='datasets_config.yml'):
     with open(config_path, 'r') as f:
@@ -112,3 +148,68 @@ def gene_search_options(genes, search_value):
         matching = sorted(starts_with) + sorted(contains)
         return [{'label': g, 'value': g} for g in matching]
     return [{'label': g, 'value': g} for g in sorted(genes)]
+
+def detect_cp_target(adata, n_sample=256):
+    """Detect the counts-per-X normalisation target of a log1p-normalised ``.X``.
+
+    For CP-normalised data every cell's ``expm1(.X)`` sums to the same target (1e4 for
+    CP10K, 1e6 for CPM). Sample cells, sum ``expm1`` across genes, and return the
+    median when the sums are tightly clustered; return None otherwise (raw counts,
+    z-scored, scran-pooled, or otherwise not a clean log1p(CP)) so the pseudobulk panel
+    is omitted rather than reconstructed from an unknown normalisation.
+    """
+    try:
+        n = adata.n_obs
+        if n == 0:
+            return None
+        idx = np.unique(np.linspace(0, n - 1, min(n_sample, n)).astype(int))
+        X = adata.X[idx]
+        if sp.issparse(X):
+            sums = np.asarray(np.expm1(X.toarray()).sum(axis=1)).ravel()
+        else:
+            sums = np.expm1(np.asarray(X)).sum(axis=1).ravel()
+        sums = sums[np.isfinite(sums) & (sums > 0)]
+        if sums.size < max(5, 0.5 * len(idx)):
+            return None
+        med = float(np.median(sums))
+        if med <= 0:
+            return None
+        # A genuine single-target CP normalisation makes every cell's sum EQUAL to the
+        # target (only ~1e-7 float round-off). A robust 0.5-99.5 percentile band stays
+        # ~0 for such data but blows past 2% for any minority block on a different scale
+        # (e.g. a CPM arm is 100x off and, even at ~1% of cells, dominates the
+        # reconstructed pseudobulk) -- so omit Panel A. Non-finite sums are filtered
+        # above; a stray aberrant cell in the 0.5% tails is tolerated.
+        lo, hi = np.percentile(sums, [0.5, 99.5])
+        if (float(hi) - float(lo)) / med > 0.02:
+            return None
+        return med
+    except Exception as e:  # noqa: BLE001 - best-effort; omit Panel A on any failure
+        logger.warning(f"CP-target detection failed ({e}); pseudobulk panel omitted")
+        return None
+
+@lru_cache(maxsize=8)
+def dataset_column_types(filename):
+    """Per-dataset obs column typing, computed once (it scans every obs column)."""
+    return obs_column_types(load_adata(filename).obs)
+
+
+@lru_cache(maxsize=2)
+def dataset_norm_target(filename):
+    """Server-derived normalisation, never a value from dcc.Store."""
+    return detect_cp_target(load_adata(filename))
+
+
+def load_dataset_state(data_store):
+    """Return (adata, authoritative settings/columns); unknown ids do no file access."""
+    dataset_id = data_store.get('dataset_id') if isinstance(data_store, dict) else None
+    dataset = get_dataset_config(dataset_id)
+    if dataset is None:
+        return None, {}
+    adata = load_adata(dataset['file_path'])
+    settings = dict(dataset)
+    settings.update(dataset_id=dataset_id, filename=dataset['file_path'],
+                    column_types=dataset_column_types(dataset['file_path']),
+                    metadata_cols=list(adata.obs.columns), genes=list(adata.var_names),
+                    x_norm_target=dataset_norm_target(dataset['file_path']))
+    return adata, settings

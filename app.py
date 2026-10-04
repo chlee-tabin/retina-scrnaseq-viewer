@@ -24,10 +24,12 @@ from callbacks.status_callbacks import *
 from callbacks.deg_callbacks import *
 
 # Import utilities
-from utils.data_loading import load_adata, load_dataset_config, validate_datasets, choose_default_embedding
+from utils.data_loading import (load_adata, load_dataset_config, validate_datasets,
+                                choose_default_embedding, get_dataset_config, dataset_norm_target)
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import state_for_dataset
 from utils.smoothing import resolve_smooth_sigma
+from utils.validation import obs_column_types
 from components.status_bar import create_status_bar
 
 # Add command line argument parsing. Use parse_known_args (not parse_args) so that
@@ -81,45 +83,6 @@ app = dash.Dash(
 )
 app.title = "Single-cell Data Viewer"  # Set the title for the browser tab
 server = app.server
-
-def _detect_cp_target(adata, n_sample=256):
-    """Detect the counts-per-X normalisation target of a log1p-normalised ``.X``.
-
-    For CP-normalised data every cell's ``expm1(.X)`` sums to the same target (1e4 for
-    CP10K, 1e6 for CPM). Sample cells, sum ``expm1`` across genes, and return the
-    median when the sums are tightly clustered; return None otherwise (raw counts,
-    z-scored, scran-pooled, or otherwise not a clean log1p(CP)) so the pseudobulk panel
-    is omitted rather than reconstructed from an unknown normalisation.
-    """
-    try:
-        n = adata.n_obs
-        if n == 0:
-            return None
-        idx = np.unique(np.linspace(0, n - 1, min(n_sample, n)).astype(int))
-        X = adata.X[idx]
-        if scipy.sparse.issparse(X):
-            sums = np.asarray(np.expm1(X.toarray()).sum(axis=1)).ravel()
-        else:
-            sums = np.expm1(np.asarray(X)).sum(axis=1).ravel()
-        sums = sums[np.isfinite(sums) & (sums > 0)]
-        if sums.size < max(5, 0.5 * len(idx)):
-            return None
-        med = float(np.median(sums))
-        if med <= 0:
-            return None
-        # A genuine single-target CP normalisation makes every cell's sum EQUAL to the
-        # target (only ~1e-7 float round-off). A robust 0.5-99.5 percentile band stays
-        # ~0 for such data but blows past 2% for any minority block on a different scale
-        # (e.g. a CPM arm is 100x off and, even at ~1% of cells, dominates the
-        # reconstructed pseudobulk) -- so omit Panel A. Non-finite sums are filtered
-        # above; a stray aberrant cell in the 0.5% tails is tolerated.
-        lo, hi = np.percentile(sums, [0.5, 99.5])
-        if (float(hi) - float(lo)) / med > 0.02:
-            return None
-        return med
-    except Exception as e:  # noqa: BLE001 - best-effort; omit Panel A on any failure
-        logger.warning(f"CP-target detection failed ({e}); pseudobulk panel omitted")
-        return None
 
 # Main layout with fixed sidebar
 app.layout = dbc.Container([
@@ -211,8 +174,9 @@ def update_dataset_info(dataset_id, data_store):
         return ""
     
     try:
-        config = load_dataset_config()
-        dataset = config['datasets'][dataset_id]
+        dataset = get_dataset_config(dataset_id)
+        if dataset is None:
+            raise ValueError('Unknown dataset.')
         
         # Get number of cells from data_store if available
         n_cells = f"{data_store['n_cells']:,}" if data_store and 'n_cells' in data_store else 'N/A'
@@ -248,7 +212,7 @@ def update_dataset_info(dataset_id, data_store):
         ])
     except Exception as e:
         logger.error(f"Error loading dataset info: {str(e)}")
-        return html.Div(f"Error loading dataset information: {str(e)}")
+        return html.Div("Unable to load dataset information.")
 
 # Simplify the data loading callback to only handle dataset selection
 @callback(
@@ -274,23 +238,17 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         return None, [], [], None, None, [], "", 'custom_embedding', no_update
     
     try:
-        config = load_dataset_config()
-        dataset = config['datasets'][dataset_id]
+        dataset = get_dataset_config(dataset_id)
+        if dataset is None:
+            raise ValueError('Unknown dataset.')
         adata = load_adata(dataset['file_path'])
         
         # Determine column types. A low-cardinality INTEGER column (cluster ids, Phase
         # codes) is treated as CATEGORICAL -- matching _is_categorical_series in
         # main_callbacks -- so such an annotation is offered in the group-by / colour
         # controls instead of being mis-handled as a continuous axis.
-        column_types = {}
-        for col in adata.obs.columns:
-            s = adata.obs[col]
-            is_small_int = pd.api.types.is_integer_dtype(s) and len(s.unique()) <= 50
-            if pd.api.types.is_numeric_dtype(s) and not is_small_int:
-                column_types[col] = 'numeric'
-            else:
-                column_types[col] = 'categorical'
-        
+        column_types = obs_column_types(adata.obs)
+
         # Create embedding list including custom embedding option
         available_embeddings = list(adata.obsm.keys())
         
@@ -332,7 +290,7 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             # CP-normalisation target of .X (1e4=CP10K, 1e6=CPM, ...) so the group
             # "Figure" reconstructs raw counts for ANY log1p(CP*) normalisation; None
             # when .X is not a clean log1p(CP) (then Panel A is omitted).
-            'x_norm_target': _detect_cp_target(adata),
+            'x_norm_target': dataset_norm_target(dataset['file_path']),
         }
         
         # Create embedding options with custom embedding as first option
@@ -358,14 +316,14 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         ]
         color_options.extend([
             {'label': col, 'value': col} 
-            for col in data_store['metadata_cols']
+            for col in column_types
         ])
         
         # Determine color and gene values. Defaults when there is no URL state
         # or prior selection: color by gene expression, and the dataset's
         # configured default_gene (species-correct casing, e.g. FGF8 / Fgf8).
         default_gene = dataset.get('default_gene')
-        valid_color_values = ['gene_expression'] + data_store['metadata_cols']
+        valid_color_values = ['gene_expression'] + list(column_types)
         if url_color in valid_color_values:
             color_value = url_color
         elif current_color in valid_color_values:
@@ -398,8 +356,8 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         return data_store, embedding_options, color_options, color_value, gene_value, gene_options, "", embedding_value, smooth_sigma_value
         
     except Exception as e:
-        error_message = f"Error loading data: {str(e)}"
-        logger.error(error_message)
+        error_message = "Unable to load this dataset. Please retry later."
+        logger.exception("Error loading data")
         return None, [], [], None, None, [], error_message, 'custom_embedding', no_update
 
 # NOTE: restoring controls from a shared URL is handled solely by
@@ -425,6 +383,10 @@ def update_data(dataset_id, url_search, current_color, current_gene):
 @server.route('/download/<path:filepath>')
 def download_file(filepath):
     try:
+        allowed = {os.path.basename(ds['file_path'])
+                   for ds in load_dataset_config()['datasets'].values()}
+        if filepath not in allowed or filepath != os.path.basename(filepath):
+            return "Forbidden", 403
         # Restrict downloads to files that live inside DATA_DIR. Resolve both
         # the data directory and the requested file to absolute, symlink-free
         # paths and confirm the request stays within DATA_DIR. This rejects

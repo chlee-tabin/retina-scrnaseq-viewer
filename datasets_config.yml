@@ -13,7 +13,7 @@ last_updated: "2026-05-31"
 datasets:
   chick_rpc:
     title: "Chick Retinal Progenitor Cells"
-    description: "29,025 chick (Gallus gallus) retinal progenitor cells with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Emerson et al., originally GSE142244)."
+    description: "29,025 chick (Gallus gallus) retinal progenitor cells with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Ghinia Tegla et al. 2020, originally GSE142244)."
     file_path: "data/20250604_chick_RPC.h5ad"
     last_updated: "2025-06-04"
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
@@ -53,11 +53,11 @@ datasets:
       organism: "Chick (Gallus gallus)"
       cell_type: "Retinal progenitor cells"
       cells: "29,025"
-      data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Emerson et al.)"
+      data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Ghinia Tegla et al. 2020)"
 
   chick_full:
     title: "Chick Retina — Full (all cell classes)"
-    description: "85,135 chick (Gallus gallus) embryonic retinal cells spanning all major classes — retinal progenitors (RPC), neurogenic cells, cone photoreceptors, horizontal cells, amacrine subtypes (GABAergic/glycinergic), and retinal ganglion cells, plus vascular/endothelial and interferon-responding cells. Navigable by UMAP (Harmony-integrated). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Emerson et al., GSE142244). Cell-type annotations were vetted with a uniquely-expressed-gene (U-method) specificity analysis and field-grounded horizontal/amacrine separation; cycling precursors are labeled separately. This full object has no inferred DV/NT topographic coordinates -- those apply to the chick RPC dataset."
+    description: "85,135 chick (Gallus gallus) embryonic retinal cells spanning all major classes — retinal progenitors (RPC), neurogenic cells, cone photoreceptors, horizontal cells, amacrine subtypes (GABAergic/glycinergic), and retinal ganglion cells, plus vascular/endothelial and interferon-responding cells. Navigable by UMAP (Harmony-integrated). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Ghinia Tegla et al. 2020, GSE142244). Cell-type annotations were vetted with a uniquely-expressed-gene (U-method) specificity analysis and field-grounded horizontal/amacrine separation; cycling precursors are labeled separately. This full object has no inferred DV/NT topographic coordinates -- those apply to the chick RPC dataset."
     file_path: "data/20260620_chick_full.h5ad"
     last_updated: "2026-06-20"
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
@@ -118,14 +118,14 @@ datasets:
       cells: "85,135"
       navigation: "UMAP (no DV/NT spatial scores; see the chick RPC dataset for topographic coordinates)"
       annotation: "U-method-vetted; HC/AC split by LHX1+/PROX1+/GAD- field gate"
-      data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Emerson et al.)"
+      data_source: "This study (Cepko Lab); 1 library reprocessed from GSE142244 (Ghinia Tegla et al. 2020)"
 
   human_rpc:
     title: "Human Retinal Progenitor Cells"
-    description: "21,793 human (Homo sapiens) fetal retinal progenitor cells (PCW 7-11) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE138002 (Sridhar et al.), GSE234963, and GSE246169."
+    description: "21,793 human (Homo sapiens) fetal retinal progenitor cells (PCW 7-11) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE138002 (Lu et al. 2020), GSE234963 (Dorgau et al. 2024), and GSE246169 (Wohlschlegel et al. 2023)."
     file_path: "data/20250604_human_RPC.h5ad"
     last_updated: "2025-06-04"
-    author: "Reprocessed public data: GSE138002, GSE234963, GSE246169"
+    author: "Reprocessed public data: GSE138002 (Lu et al. 2020), GSE234963 (Dorgau et al. 2024), GSE246169 (Wohlschlegel et al. 2023)"
     default_gene: "FGF8"
     smooth_sigma: 2.0          # match chick/mouse RPC; 0.5 was a near-no-op (kernel stayed in the center bin)
     min_cells_per_bin: 2
@@ -146,7 +146,7 @@ datasets:
       cell_type: "Retinal progenitor cells"
       developmental_window: "PCW 7-11"
       cells: "21,793"
-      data_source: "Reprocessed from GSE138002 (Sridhar et al.), GSE234963, GSE246169"
+      data_source: "Reprocessed from GSE138002 (Lu et al. 2020), GSE234963 (Dorgau et al. 2024), GSE246169 (Wohlschlegel et al. 2023)"
 
   mouse_rpc:
     title: "Mouse Retinal Progenitor Cells"

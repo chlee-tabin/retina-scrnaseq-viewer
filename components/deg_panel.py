@@ -1,7 +1,7 @@
 """ROI differential-expression section, shown below the spatial map (not a separate
 view). The user draws one or two polygon ROIs directly on the map above (click to add
 vertices, double-click to close; handled by assets/roi_draw.js), then runs a pseudobulk
-NB-GLM DE over the demux replicate unit. Hidden in the "Expression by group" view.
+NB-GLM DE over the dataset's configured replicate columns. Hidden in the "Expression by group" view.
 """
 from dash import html, dcc, dash_table
 import dash_bootstrap_components as dbc
@@ -17,7 +17,8 @@ def create_deg_panel():
             "rest; add ", html.B("ROI B"), " for A vs. B (an overlapping cell goes to the "
             "smaller ROI). Selection is point-in-polygon on the DV/NT scores, so it works on "
             "the per-cell or binned/smoothed map. The test is a negative-binomial pseudobulk "
-            "DE (pydeseq2) over the demux replicate unit (library × genotype) — the "
+            "DE (pydeseq2) over the dataset's configured replicate columns "
+            "(chick: library × genotype; human/mouse: library) — the "
             "interactive form of the manuscript area-DEG volcano.",
         ], color="light", className="border small mb-2"),
 
@@ -29,7 +30,7 @@ def create_deg_panel():
             ]), width="auto"),
             dbc.Col(html.Span("Min cells/pseudobulk:", className="small me-1"),
                     width="auto", className="d-flex align-items-center"),
-            dbc.Col(dcc.Input(id='deg-min-cells', type='number', value=50, min=5, step=5,
+            dbc.Col(dcc.Input(id='deg-min-cells', type='number', value=50, min=5, max=100000, step=5,
                               debounce=True, style={'width': '80px'}),
                     width="auto", className="d-flex align-items-center"),
             dbc.Col(html.Span(id='roi-draw-status', className='small text-muted'),

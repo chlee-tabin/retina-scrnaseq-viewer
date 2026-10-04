@@ -21,7 +21,7 @@ def handle_callback_error(func):
             elif 'children' in func.__name__:
                 return html.Div([
                     html.H4("Error", className="text-danger"),
-                    html.P(error_msg)
+                    html.P("Unable to complete this request. Please retry later.")
                 ])
             else:
                 return None
@@ -35,4 +35,4 @@ def log_callback_info(func):
         result = func(*args, **kwargs)
         logger.debug(f"Callback {func.__name__} completed")
         return result
-    return wrapper 
+    return wrapper

@@ -2,6 +2,8 @@ from dash import Input, Output, State, callback, ctx, no_update
 import logging
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import create_share_url, parse_url_state
+from utils.validation import coerce_control, coerce_roi
+from utils.data_loading import get_dataset_config
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +61,7 @@ def initialize_from_url(search, pathname):
     if triggered_id == 'url.pathname' or not search:
         return (no_update,) * n_out
     state = parse_url_state(search)
-    if not state:
+    if not state or get_dataset_config(state.get('dataset')) is None:
         return (no_update,) * n_out
 
     return (
@@ -176,6 +178,10 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
     if n_clicks is None:
         return {'display': 'none'}, ''
 
+    volcano_lfc = coerce_control('volcano_lfc', volcano_lfc)
+    volcano_padj = coerce_control('volcano_padj', volcano_padj)
+    deg_min_cells = coerce_control('deg_min_cells', deg_min_cells)
+
     # Share-state schema v2 (see docs/VIEWER_SPEC.md). Only the keys relevant to the
     # current view are written, so URLs stay lean; absent keys restore to defaults.
     state_dict = {
@@ -267,7 +273,7 @@ def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
     # ROI polygons (the differential-expression setup). Additive optional key -- old
     # links lack it (restore to no ROI) and older viewers ignore it, so the URL stays
     # backward compatible. Coords rounded to keep a handful of vertices compact.
-    roi = roi_verts or {}
+    roi = coerce_roi(roi_verts)
     roi_clean = {k: [[round(float(p[0]), 4), round(float(p[1]), 4)]
                      for p in (roi.get(k) or [])]
                  for k in ('A', 'B')}

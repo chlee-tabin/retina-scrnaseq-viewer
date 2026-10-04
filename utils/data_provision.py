@@ -49,6 +49,9 @@ def ensure_one_dataset(file_path):
     present, and serialized per-file so two callers can't race the same download.
     If ``HF_DATA_REPO`` is unset the local path is returned as-is (local dev).
     """
+    from utils.data_loading import configured_file_paths
+    if not isinstance(file_path, str) or file_path not in configured_file_paths():
+        raise ValueError('Unknown dataset file.')
     data_dir = os.getenv("DATA_DIR", "data")
     name = os.path.basename(str(file_path))
     dest = os.path.join(data_dir, name)
@@ -113,4 +116,4 @@ def ensure_datasets(config):
         name = os.path.basename(str(ds.get("file_path", "")))
         if name and name not in seen:
             seen.add(name)
-            ensure_one_dataset(name)
+            ensure_one_dataset(ds['file_path'])

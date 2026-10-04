@@ -132,8 +132,8 @@ def create_control_panel():
                                     "Nasotemporal extent (deg):",
                                     _help('help-rho-nt', "Nasotemporal extent",
                                           "Max colatitude (angle from the HAA pole) the most extreme "
-                                          "nasal/temporal cells reach on the cap. Default 82° reproduces "
-                                          "Fig R2.5. 90° = the equator (a hemisphere); a real retina lines "
+                                          "nasal/temporal cells reach on the cap. Default 82°. "
+                                          "90° = the equator (a hemisphere); a real retina lines "
                                           "~72–76% of the eye = a cap of ~116–121°, so the slider runs to "
                                           "150°. NOTE: with the arcsin de-warp the effect saturates near "
                                           "90° and folds past it (110° → a SMALLER cap than 90°) — to use "
@@ -256,7 +256,7 @@ def create_control_panel():
                                         "Uncaptured-nasal cap",
                                         _help('help-nasal-gap', "Uncaptured most-nasal cap",
                                               "The chick RPC data under-samples the most-nasal "
-                                              "retina; the flat Fig R2.5 flower draws it as a "
+                                              "retina; the flat flower draws it as a "
                                               "hatched 'missing/uncaptured' cap. These knobs "
                                               "control it in BOTH whole-mount views: the flower "
                                               "(hatched tiles, as published) and the sphere (the "
@@ -264,7 +264,7 @@ def create_control_panel():
                                               "Reach = radial layers (0 = off); Depth = outward "
                                               "step per layer; Dorsal/Ventral reach = which arc "
                                               "of the nasal rim it covers. Render-only; adds no "
-                                              "data. Defaults 2 / 0.13 / 45° / 55° ≈ Fig R2.5."),
+                                              "data. Defaults 2 / 0.13 / 45° / 55°."),
                                     ], className="fw-semibold small"),
                                     html.Label("Reach (radial layers):", className="mt-1 small"),
                                     dcc.Slider(id='nasal-gap-layers', min=0, max=5, step=1, value=2,
@@ -286,7 +286,7 @@ def create_control_panel():
 
                                 # Reset every Advanced-projection control to the Fig R2.5
                                 # default in one click (see reset_wholemount_params).
-                                dbc.Button("↺ Reset projection to Fig R2.5 default",
+                                dbc.Button("↺ Reset projection to default",
                                            id='wm-reset', size='sm', color='secondary',
                                            outline=True, className="mt-3"),
                             ], id='wholemount-advanced', style={'display': 'none'},
