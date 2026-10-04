@@ -80,7 +80,6 @@ def load_adata(filename):
 
 
 # Preserve the public cache introspection/invalidation API and maxsize=2 semantics.
-load_adata.cache_clear = _cached_load_adata.cache_clear
 load_adata.cache_info = _cached_load_adata.cache_info
 load_adata.cache_parameters = _cached_load_adata.cache_parameters
 
@@ -203,6 +202,16 @@ def dataset_column_types(filename):
 def dataset_norm_target(filename):
     """Server-derived normalisation, never a value from dcc.Store."""
     return detect_cp_target(load_adata(filename))
+
+
+def _clear_dataset_caches():
+    """Invalidate the AnnData cache together with everything derived from it."""
+    _cached_load_adata.cache_clear()
+    dataset_column_types.cache_clear()
+    dataset_norm_target.cache_clear()
+
+
+load_adata.cache_clear = _clear_dataset_caches
 
 
 def load_dataset_state(data_store):
