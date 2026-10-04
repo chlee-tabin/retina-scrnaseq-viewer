@@ -1,4 +1,4 @@
-from dash import Input, Output, State, callback, clientside_callback, ctx
+from dash import Input, Output, State, callback, clientside_callback, ctx, no_update
 from utils.data_loading import load_dataset_state, get_dataset_config, store_dataset_id, gene_search_options, match_gene
 from utils.plotting import (
     create_scatter_plot,
@@ -1101,20 +1101,16 @@ def populate_group_controls(data_store, url_search, group_value_source):
     Output('group-gene-select', 'options', allow_duplicate=True),
     [Input('data-store', 'data'),
      Input('group-gene-select', 'search_value'),
-     Input('url', 'search')],
-    State('group-gene-select', 'value'),
+     Input('group-gene-select', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_group_gene_select(data_store, search_value, url_search, current_gene):
+def update_group_gene_select(data_store, search_value, current_gene):
+    # Options follow the live value (an Input) plus the search text; see update_gene_select.
     if not data_store or 'genes' not in data_store:
-        return []
-    dataset_id = store_dataset_id(data_store)
-    state = state_for_dataset(url_search, dataset_id)
-    dataset = get_dataset_config(dataset_id) or {}
-    shared_gene = restore_state(state, dataset)['group_gene'] if state else None
-    return gene_search_options(data_store['genes'], search_value, shared_gene or current_gene)
+        return no_update
+    return gene_search_options(data_store['genes'], search_value, current_gene)
 
 
 # ---- F4: show/hide the second-gene dropdown ----
@@ -1133,20 +1129,16 @@ def toggle_compare_genes(compare_genes):
     Output('gene-select-2', 'options'),
     [Input('data-store', 'data'),
      Input('gene-select-2', 'search_value'),
-     Input('url', 'search')],
-    State('gene-select-2', 'value'),
+     Input('gene-select-2', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_gene_select_2(data_store, search_value, url_search, current_gene):
+def update_gene_select_2(data_store, search_value, current_gene):
+    # Options follow the live value (an Input) plus the search text; see update_gene_select.
     if not data_store or 'genes' not in data_store:
-        return []
-    dataset_id = store_dataset_id(data_store)
-    state = state_for_dataset(url_search, dataset_id)
-    dataset = get_dataset_config(dataset_id) or {}
-    shared_gene = restore_state(state, dataset)['gene2'] if state else None
-    return gene_search_options(data_store['genes'], search_value, shared_gene or current_gene)
+        return no_update
+    return gene_search_options(data_store['genes'], search_value, current_gene)
 
 
 @callback(

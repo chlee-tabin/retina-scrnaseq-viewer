@@ -133,8 +133,7 @@ def test_legacy_v3_restore_keeps_gene_dropdown_value_and_v4_roundtrips():
              patch.object(app, 'dataset_norm_target', return_value=None):
             data_values = app.update_data('chick_rpc', search, None, None)
         data_store, _, _, color, gene, gene_options = data_values[:6]
-        _, search_options = dataset_cb.update_gene_select(
-            color, data_store, None, None, search)
+        _, search_options = dataset_cb.update_gene_select(color, data_store, None, gene)
         assert color == 'gene_expression'
         assert gene == 'CYP26C1'
         assert url_values['custom_projection'] == 'flower'
@@ -150,7 +149,21 @@ def test_legacy_v3_restore_keeps_gene_dropdown_value_and_v4_roundtrips():
     restored = restore_state(parse_url_state(legacy_search), dataset)
     v4_state = capture_state([restored[key] for key in schema_keys()], dataset)
     assert v4_state['v'] == 4
-    assert_restored('?state=' + encode_state(v4_state))
+    data_store = assert_restored('?state=' + encode_state(v4_state))
+
+    # Options follow the LIVE value, not the link: after restoring CYP26C1 the user picks
+    # FGF8 and clears the search -> FGF8 stays selectable (review finding).
+    _, opts = dataset_cb.update_gene_select('gene_expression', data_store, '', 'FGF8')
+    assert {'label': 'FGF8', 'value': 'FGF8'} in opts
+    # Colouring by metadata hides the picker without wiping its options/selection.
+    style, opts = dataset_cb.update_gene_select('library', data_store, None, 'FGF8')
+    assert style == {'display': 'none'} and opts is no_update
+    # Group / second-gene pickers: options track whatever value was set, so an initial
+    # empty response cannot strand the default gene (it re-fires when the value lands).
+    for fn in (main.update_group_gene_select, main.update_gene_select_2):
+        assert fn(data_store, None, None) == []
+        assert {'label': 'VAX1', 'value': 'VAX1'} in fn(data_store, None, 'VAX1')
+        assert fn(None, None, 'VAX1') is no_update
 
 
 def test_checksum_cache_and_mismatch_deletion():
