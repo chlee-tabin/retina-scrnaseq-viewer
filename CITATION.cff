@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this viewer, please cite it as below, together with the accompanying manuscript and the original GEO accessions listed in the README."
+title: "Retina scRNA-seq Pattern Viewer"
+type: software
+authors:
+  - family-names: Lee
+    given-names: ChangHee
+license: MIT
+repository-code: "https://github.com/chlee-tabin/retina-scrnaseq-viewer"
+url: "https://huggingface.co/spaces/chlee-tabin/retina-scrnaseq-viewer"
