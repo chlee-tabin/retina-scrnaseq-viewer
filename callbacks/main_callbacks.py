@@ -1,5 +1,5 @@
 from dash import Input, Output, State, callback, clientside_callback
-from utils.data_loading import load_dataset_state, get_dataset_config, gene_search_options
+from utils.data_loading import load_dataset_state, get_dataset_config, store_dataset_id, gene_search_options
 from utils.plotting import (
     create_scatter_plot,
     create_binned_plot,
@@ -864,7 +864,7 @@ def toggle_nasal_gap_controls(custom_projection, data_store):
     # R2.5 hatched cap, its origin) and the sphere (the 3D echo) -- and only for datasets that
     # configure `nasal_gap` (chick under-samples the most-nasal retina). Show its controls only
     # then; raw axes / human / mouse never see them. Mirrors the band's own gating.
-    dataset = get_dataset_config((data_store or {}).get('dataset_id')) or {}
+    dataset = get_dataset_config(store_dataset_id(data_store)) or {}
     if custom_projection in ('flower', 'sphere') and dataset.get('nasal_gap'):
         return {'display': 'block'}
     return {'display': 'none'}
@@ -879,7 +879,7 @@ def toggle_haa_controls(data_store):
     # but only for datasets that configure an haa_marker (chick: CYP26C1). Show its control then;
     # human/mouse never see it. The custom-embedding-container already hides it off the custom
     # embedding, so this gates on the marker alone.
-    dataset = get_dataset_config((data_store or {}).get('dataset_id')) or {}
+    dataset = get_dataset_config(store_dataset_id(data_store)) or {}
     if dataset.get('haa_marker'):
         return {'display': 'block'}
     return {'display': 'none'}

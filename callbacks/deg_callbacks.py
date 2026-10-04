@@ -22,7 +22,8 @@ from dash.exceptions import PreventUpdate
 from dash.dash_table.Format import Format, Scheme
 import dash_bootstrap_components as dbc
 
-from utils.data_loading import load_dataset_state, get_dataset_config, dataset_column_types
+from utils.data_loading import (load_dataset_state, get_dataset_config, dataset_column_types,
+                                store_dataset_id)
 from utils.validation import coerce_control, coerce_roi
 from utils.plotting import _message_figure
 from utils.deg import (
@@ -43,8 +44,9 @@ def _column_types(data_store):
     """Column typing for a configured dataset without touching its expression matrix
     (dataset_column_types is cached per file), so signature checks and view guards never
     reload a multi-GB .h5ad evicted from the AnnData cache."""
-    dataset = get_dataset_config((data_store or {}).get('dataset_id'))
+    dataset = get_dataset_config(store_dataset_id(data_store))
     return dataset_column_types(dataset['file_path']) if dataset else {}
+
 
 @callback(
     Output('deg-section', 'style'),
@@ -165,7 +167,7 @@ def draw_state(mode, verts):
     Input('data-store', 'data'),
 )
 def populate_roi_presets(data_store):
-    dataset = get_dataset_config((data_store or {}).get('dataset_id')) or {}
+    dataset = get_dataset_config(store_dataset_id(data_store)) or {}
     regions = dataset.get('figure_regions') or []
     return [{'label': r['name'], 'value': r['name']} for r in regions]
 
@@ -235,7 +237,7 @@ def _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, 
     col_types = _column_types(data_store)
     faceted = bool(_on(enable_binning) and color_by and color_by != 'gene_expression'
                    and col_types.get(color_by) == 'categorical')
-    payload = {'verts': coerce_roi(verts), 'dataset': (data_store or {}).get('dataset_id'),
+    payload = {'verts': coerce_roi(verts), 'dataset': store_dataset_id(data_store),
                'min_cells': coerce_control('deg_min_cells', min_cells), 'x': custom_x, 'y': custom_y,
                'embedding': embedding, 'projection': projection, 'faceted': faceted}
     return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()

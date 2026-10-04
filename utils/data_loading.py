@@ -56,6 +56,11 @@ def configured_file_paths():
     return {ds['file_path'] for ds in load_dataset_config()['datasets'].values()}
 
 
+def store_dataset_id(data_store):
+    """Dataset id from the client-held data-store; a forged non-dict store is unknown."""
+    return data_store.get('dataset_id') if isinstance(data_store, dict) else None
+
+
 def get_dataset_config(dataset_id):
     """Resolve identity/settings only from the server's configuration."""
     if not isinstance(dataset_id, str):
@@ -202,7 +207,7 @@ def dataset_norm_target(filename):
 
 def load_dataset_state(data_store):
     """Return (adata, authoritative settings/columns); unknown ids do no file access."""
-    dataset_id = data_store.get('dataset_id') if isinstance(data_store, dict) else None
+    dataset_id = store_dataset_id(data_store)
     dataset = get_dataset_config(dataset_id)
     if dataset is None:
         return None, {}

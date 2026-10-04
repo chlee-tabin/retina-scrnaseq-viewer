@@ -449,6 +449,11 @@ def test_replicate_unit_survives_group_cap_and_signature_needs_no_load():
                                    'DV.Score', 'custom_embedding', 'raw',
                                    'cluster', ['enabled'])
         assert isinstance(sig, str)
+        # A forged non-dict data-store is an unknown dataset, not an exception.
+        for forged in (['chick_rpc'], 'chick_rpc', 7):
+            assert de_cb._column_types(forged) == {}
+            assert isinstance(de_cb._run_signature({}, forged, 50, 'x', 'y', 'e', 'raw'), str)
+            assert data_loading.store_dataset_id(forged) is None
 
 
 if __name__ == '__main__':
