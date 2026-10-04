@@ -175,18 +175,25 @@ def _is_categorical_series(series):
 
 
 def _group_fields(adata, settings):
-    """The same capped group/replicate choices at restore and computation time."""
+    """The same capped group/replicate choices at restore and computation time.
+
+    ``composite`` is the configured pseudobulk unit and is always kept for replicate
+    aggregation; ``group_composite`` is the same key only when it is small enough to be
+    offered as a group-by / split axis (the category cap protects faceting, not the
+    replicate unit).
+    """
     cats = [c for c, t in settings['column_types'].items() if t == 'categorical']
     configured = settings.get('replicate_columns') or []
     reps = list(configured) if all(c in cats for c in configured) else []
     subcols = set(reps[1:]) if len(reps) >= 2 else set()
     composite = _replicate_key(reps) if len(reps) >= 2 else None
+    group_composite = composite
     if composite and not category_allowed(pd.Series(replicate_labels(adata.obs, reps))):
-        composite = None
+        group_composite = None
     standalone = [c for c in cats if c not in subcols]
     default = next((c for c in (settings.get('annotation_column'), 'annotation_refined')
-                    if c in standalone), standalone[0] if standalone else composite)
-    return cats, reps, composite, standalone, default
+                    if c in standalone), standalone[0] if standalone else group_composite)
+    return cats, reps, composite, group_composite, standalone, default
 
 
 def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
@@ -334,13 +341,13 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
 
         # ---- Expression-by-group view (violin/box/strip/dotplot) ----
         if plot_type == 'group':
-            _, _, composite, standalone, default = _group_fields(adata, data_store)
-            valid_group = standalone + ([composite] if composite else [])
+            _, _, composite, group_composite, standalone, default = _group_fields(adata, data_store)
+            valid_group = standalone + ([group_composite] if group_composite else [])
             if group_by not in valid_group:
                 group_by = default
             if group_split not in valid_group:
                 group_split = None
-            if group_replicate not in valid_group:
+            if group_replicate not in standalone + ([composite] if composite else []):
                 group_replicate = composite or next(
                     (c for c in data_store.get('replicate_columns', []) if c in standalone), None)
             if not group_by:
@@ -983,12 +990,12 @@ def populate_group_controls(data_store, url_search, group_value_source):
     # libraries), so offer the (library x genotype) COMPOSITE as a group key and drop the
     # trailing demux sub-label(s) from the standalone group/split choices. The leading
     # column (library) stays groupable on its own.
-    categorical_cols, replicate_columns, composite_key, standalone_cats, _ = _group_fields(adata, data_store)
+    categorical_cols, replicate_columns, composite_key, group_composite, standalone_cats, _ = _group_fields(adata, data_store)
     composite_label = (' x '.join(replicate_columns) + ' (demux donor)') if composite_key else None
 
-    group_options = ([{'label': composite_label, 'value': composite_key}] if composite_key else []) \
+    group_options = ([{'label': composite_label, 'value': group_composite}] if group_composite else []) \
         + [{'label': c, 'value': c} for c in standalone_cats]
-    valid_group = ({composite_key} if composite_key else set()) | set(standalone_cats)
+    valid_group = ({group_composite} if group_composite else set()) | set(standalone_cats)
 
     # Default grouping: shared-URL value, else the configured annotation column, else
     # 'annotation_refined', else the first standalone categorical column (NOT the demux
@@ -1003,7 +1010,7 @@ def populate_group_controls(data_store, url_search, group_value_source):
     elif standalone_cats:
         group_value = standalone_cats[0]
     else:
-        group_value = composite_key
+        group_value = group_composite
 
     # Split-by includes a "(none)" option (value '') so a second grouping is optional.
     split_options = empty_split + group_options

@@ -430,6 +430,27 @@ def test_callbacks_and_download():
         assert log.called
 
 
+def test_replicate_unit_survives_group_cap_and_signature_needs_no_load():
+    # 101 libraries x 2 genotypes = 202 composite levels (> 200 cap): still the replicate
+    # unit, but not offered as a group-by axis.
+    n = 404
+    obs = pd.DataFrame({'library': pd.Categorical([f'L{i % 101}' for i in range(n)]),
+                        'genotype': pd.Categorical([f'g{(i // 101) % 2}' for i in range(n)])})
+    adata = SimpleNamespace(obs=obs)
+    settings = {'column_types': {'library': 'categorical', 'genotype': 'categorical'},
+                'replicate_columns': ['library', 'genotype']}
+    _, reps, composite, group_composite, standalone, _ = main._group_fields(adata, settings)
+    assert reps == ['library', 'genotype'] and composite is not None
+    assert group_composite is None and composite not in standalone
+    # Run-signature / view guards resolve column types from config + cache, never AnnData.
+    with patch.object(data_loading, 'load_adata', side_effect=AssertionError('reloaded')), \
+         patch.object(de_cb, 'dataset_column_types', return_value={'cluster': 'categorical'}):
+        sig = de_cb._run_signature({'A': []}, {'dataset_id': 'chick_rpc'}, 50, 'NT.Score',
+                                   'DV.Score', 'custom_embedding', 'raw',
+                                   'cluster', ['enabled'])
+        assert isinstance(sig, str)
+
+
 if __name__ == '__main__':
     # Keep Matplotlib's cache (polygon selection) inside the worktree and clean it up.
     with tempfile.TemporaryDirectory(prefix='hardening-cache-', dir=Path(__file__).resolve().parents[1]) as cache, \
@@ -437,7 +458,8 @@ if __name__ == '__main__':
         for test in (test_controls_and_state, test_hover_orientation,
                      test_colour_only_clipping_and_signed_metadata, test_count_sources,
                      test_missing_replicates, test_design_and_no_refit, test_de_semaphore,
-                     test_load_single_flight_and_identity, test_callbacks_and_download):
+                     test_load_single_flight_and_identity, test_callbacks_and_download,
+                     test_replicate_unit_survives_group_cap_and_signature_needs_no_load):
             test()
             print(f'OK: {test.__name__}')
     print('All hardening checks passed.')

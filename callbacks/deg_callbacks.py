@@ -22,7 +22,7 @@ from dash.exceptions import PreventUpdate
 from dash.dash_table.Format import Format, Scheme
 import dash_bootstrap_components as dbc
 
-from utils.data_loading import load_dataset_state, get_dataset_config
+from utils.data_loading import load_dataset_state, get_dataset_config, dataset_column_types
 from utils.validation import coerce_control, coerce_roi
 from utils.plotting import _message_figure
 from utils.deg import (
@@ -38,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 
 # ---- Show the ROI-DEG section only in the spatial-map view (not "Expression by group") ----
+
+def _column_types(data_store):
+    """Column typing for a configured dataset without touching its expression matrix
+    (dataset_column_types is cached per file), so signature checks and view guards never
+    reload a multi-GB .h5ad evicted from the AnnData cache."""
+    dataset = get_dataset_config((data_store or {}).get('dataset_id'))
+    return dataset_column_types(dataset['file_path']) if dataset else {}
+
 @callback(
     Output('deg-section', 'style'),
     Input('plot-type', 'value'),
@@ -122,8 +130,7 @@ def invalidate_stale_results(verts, data_store, min_cells, custom_x, custom_y,
 def invalidate_on_unsupported_view(color_by, enable_binning, results, data_store):
     if not results:
         raise PreventUpdate
-    _, settings = load_dataset_state(data_store)
-    col_types = settings.get('column_types', {})
+    col_types = _column_types(data_store)
     categorical = (color_by and color_by != 'gene_expression'
                    and col_types.get(color_by) == 'categorical')
     if _on(enable_binning) and categorical:
@@ -225,11 +232,10 @@ def _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding, 
     that run_deg_cb refuses, so any result is invalid there -- including one whose run finished
     after the switch. A benign recolour between DE-capable views leaves it False (result kept),
     so colour/binning are captured only through this derived bit, not raw."""
-    _, settings = load_dataset_state(data_store)
-    col_types = settings.get('column_types', {})
+    col_types = _column_types(data_store)
     faceted = bool(_on(enable_binning) and color_by and color_by != 'gene_expression'
                    and col_types.get(color_by) == 'categorical')
-    payload = {'verts': coerce_roi(verts), 'dataset': settings.get('dataset_id'),
+    payload = {'verts': coerce_roi(verts), 'dataset': (data_store or {}).get('dataset_id'),
                'min_cells': coerce_control('deg_min_cells', min_cells), 'x': custom_x, 'y': custom_y,
                'embedding': embedding, 'projection': projection, 'faceted': faceted}
     return hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
