@@ -1,5 +1,5 @@
 from dash import Input, Output, State, callback, clientside_callback
-from utils.data_loading import load_adata, load_dataset_config, gene_search_options
+from utils.data_loading import load_dataset_state, get_dataset_config, store_dataset_id, gene_search_options
 from utils.plotting import (
     create_scatter_plot,
     create_binned_plot,
@@ -19,6 +19,9 @@ import pandas as pd
 import logging
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.state import state_for_dataset
+from utils.validation import coerce_control, coerce_camera, category_allowed, is_categorical_series
+from utils.smoothing import _coerce_sigma
+from utils.deg import replicate_labels
 from utils import wholemount
 import scipy.sparse
 import numpy as np
@@ -74,6 +77,7 @@ def _apply_sphere_camera(fig, cam):
     """Override the sphere scene camera(s) with the user's stored camera so a rotation persists
     across gene/colour changes. No-op when `cam` is falsy (first render keeps the default
     face-on camera). Sets scene2 too only when the figure actually has a second scene (dual)."""
+    cam = coerce_camera(cam)
     if not cam:
         return fig
     fig.update_layout(scene_camera=cam)
@@ -112,10 +116,10 @@ def _replicate_series(adata, replicate_value, replicate_columns):
     obs = adata.obs
 
     def join(cols):
-        return obs[cols].astype(str).agg(_REP_SEP.join, axis=1).to_numpy()
+        return replicate_labels(obs, cols)
 
     if replicate_value and replicate_value in obs.columns:
-        return obs[replicate_value].astype(str).to_numpy()
+        return join([replicate_value])
     if replicate_value and _REP_SEP in replicate_value:
         want = replicate_value.split(_REP_SEP)
         present = [c for c in want if c in obs.columns]
@@ -126,7 +130,7 @@ def _replicate_series(adata, replicate_value, replicate_columns):
     if len(configured) >= 2:
         return join(present) if len(present) == len(configured) else None
     if len(configured) == 1:
-        return obs[present[0]].astype(str).to_numpy() if present else None
+        return join(present) if present else None
     return None
 
 
@@ -147,9 +151,11 @@ def _resolve_group_field(adata, field):
             return field, None
         disp = ' x '.join(cols)
         ser = adata.obs[cols].astype(str).agg(' | '.join, axis=1).to_numpy()
-        return disp, ser
+        return (disp, ser) if category_allowed(pd.Series(ser)) else (field, None)
     if field in adata.obs.columns:
-        return field, adata.obs[field].astype(str).to_numpy()
+        s = adata.obs[field]
+        if is_categorical_series(s) and category_allowed(s):
+            return field, s.astype(str).to_numpy()
     return field, None
 
 
@@ -165,10 +171,29 @@ def _annotation_style(data_store, column):
 
 def _is_categorical_series(series):
     """Heuristic used across the viewer: category/object dtype or small-int."""
-    return (
-        series.dtype.name in ['category', 'object'] or
-        (pd.api.types.is_integer_dtype(series) and len(series.unique()) <= 50)
-    )
+    return is_categorical_series(series)
+
+
+def _group_fields(adata, settings):
+    """The same capped group/replicate choices at restore and computation time.
+
+    ``composite`` is the configured pseudobulk unit and is always kept for replicate
+    aggregation; ``group_composite`` is the same key only when it is small enough to be
+    offered as a group-by / split axis (the category cap protects faceting, not the
+    replicate unit).
+    """
+    cats = [c for c, t in settings['column_types'].items() if t == 'categorical']
+    configured = settings.get('replicate_columns') or []
+    reps = list(configured) if all(c in cats for c in configured) else []
+    subcols = set(reps[1:]) if len(reps) >= 2 else set()
+    composite = _replicate_key(reps) if len(reps) >= 2 else None
+    group_composite = composite
+    if composite and not category_allowed(pd.Series(replicate_labels(adata.obs, reps))):
+        group_composite = None
+    standalone = [c for c in cats if c not in subcols]
+    default = next((c for c in (settings.get('annotation_column'), 'annotation_refined')
+                    if c in standalone), standalone[0] if standalone else group_composite)
+    return cats, reps, composite, group_composite, standalone, default
 
 
 def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
@@ -179,35 +204,35 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
     the preset, so the defaults reproduce Fig R2.5 exactly."""
     P = dict(wholemount.LOCKED_PARAMS)
     if rho_nt is not None:
-        P['rho_max_nt_deg'] = float(rho_nt)
+        P['rho_max_nt_deg'] = coerce_control('wm_rho_nt', rho_nt)
     if rho_dv is not None:
-        P['rho_max_dv_deg'] = float(rho_dv)
+        P['rho_max_dv_deg'] = coerce_control('wm_rho_dv', rho_dv)
     if gap_gain is not None:
-        P['gap_gain'] = float(gap_gain)
+        P['gap_gain'] = coerce_control('wm_gap', gap_gain)
     # Scale the locked directional stretch bumps (temporal / ventro-temporal / dorso-nasal)
     # by the slider; 0 -> no anatomical stretch, 1 -> the shipped amounts.
     if stretch_scale is not None:
-        s = float(stretch_scale)
+        s = coerce_control('wm_stretch', stretch_scale)
         P['stretch_bumps'] = tuple((ang, amp * s, wid)
                                    for (ang, amp, wid) in wholemount.LOCKED_PARAMS['stretch_bumps'])
     # Evenly spaced relief cuts; 0 -> a solid disk (no slits).
     if n_cuts is not None:
-        k = int(n_cuts)
+        k = coerce_control('wm_cuts', n_cuts)
         P['cut_angles_deg'] = tuple(i * 360.0 / k for i in range(k)) if k > 0 else ()
     # Knobs not pinned by LOCKED_PARAMS (they inherit DEFAULT_PARAMS): exposed so the user
     # can explore them. Each stays at the R2.5 value unless its control overrides it.
     if symmetric is not None:
         P['symmetric'] = bool(symmetric)   # False -> p99 per-axis scaling (true asymmetry)
     if dewarp is not None:
-        P['dewarp'] = dewarp               # 'arcsin' (R2.5) | 'pow' | 'none'
+        P['dewarp'] = dewarp if dewarp in ('arcsin', 'pow', 'none') else 'arcsin'
     if pow_p is not None:
-        P['pow_p'] = float(pow_p)          # exponent for dewarp='pow'
+        P['pow_p'] = coerce_control('wm_pow', pow_p)
     if gap_mode is not None:
-        P['gap_mode'] = gap_mode           # 'deficit' (R2.5) | 'linear'
+        P['gap_mode'] = gap_mode if gap_mode in ('deficit', 'linear') else 'deficit'
     if gap_frac is not None:
-        P['gap_frac'] = float(gap_frac)    # rip width for gap_mode='linear'
+        P['gap_frac'] = coerce_control('wm_gap_frac', gap_frac)
     if pole is not None:
-        P['pole'] = pole                   # 'origin' (R2.5) | 'median'
+        P['pole'] = pole if pole in ('origin', 'median') else 'origin'
     return P
 
 
@@ -219,10 +244,10 @@ def _nasal_gap_params(cfg, layers, frac, dorsal, ventral):
     if not cfg:
         return None
     return {
-        'layers': int(layers if layers is not None else cfg.get('layers', 2)),
-        'frac': float(frac if frac is not None else cfg.get('frac', 0.13)),
-        'dorsal_deg': float(dorsal if dorsal is not None else 45.0),
-        'ventral_deg': float(ventral if ventral is not None else 55.0),
+        'layers': coerce_control('ng_layers', layers if layers is not None else cfg.get('layers', 2)),
+        'frac': coerce_control('ng_frac', frac if frac is not None else cfg.get('frac', 0.13)),
+        'dorsal_deg': coerce_control('ng_dorsal', dorsal),
+        'ventral_deg': coerce_control('ng_ventral', ventral),
     }
 
 
@@ -305,11 +330,26 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         return {}
 
     try:
-        config = load_dataset_config()
-        adata = load_adata(data_store['filename'])
+        adata, data_store = load_dataset_state(data_store)
+        if adata is None:
+            return _message_figure("Unknown dataset. Please select a configured dataset.")
+        bin_number = coerce_control('bins', bin_number)
+        percentile = coerce_control('percentile', percentile)
+        smooth_sigma_ctrl = _coerce_sigma(smooth_sigma_ctrl, data_store.get('smooth_sigma', 1.5))
+        if color_by != 'gene_expression' and color_by not in data_store['column_types']:
+            color_by = 'gene_expression'
 
         # ---- Expression-by-group view (violin/box/strip/dotplot) ----
         if plot_type == 'group':
+            _, _, composite, group_composite, standalone, default = _group_fields(adata, data_store)
+            valid_group = standalone + ([group_composite] if group_composite else [])
+            if group_by not in valid_group:
+                group_by = default
+            if group_split not in valid_group:
+                group_split = None
+            if group_replicate not in standalone + ([composite] if composite else []):
+                group_replicate = composite or next(
+                    (c for c in data_store.get('replicate_columns', []) if c in standalone), None)
             if not group_by:
                 return _message_figure("Select a categorical column to group by.")
 
@@ -689,7 +729,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
 @handle_callback_error
 @log_callback_info
 def update_custom_embedding_controls(data_store, embedding, url_search):
-    if not data_store or not data_store.get('metadata_cols'):
+    _, data_store = load_dataset_state(data_store)
+    if not data_store:
         return [], [], None, None, {'display': 'none'}
     
     # Get numeric columns for custom embedding
@@ -823,7 +864,8 @@ def toggle_nasal_gap_controls(custom_projection, data_store):
     # R2.5 hatched cap, its origin) and the sphere (the 3D echo) -- and only for datasets that
     # configure `nasal_gap` (chick under-samples the most-nasal retina). Show its controls only
     # then; raw axes / human / mouse never see them. Mirrors the band's own gating.
-    if custom_projection in ('flower', 'sphere') and (data_store or {}).get('nasal_gap'):
+    dataset = get_dataset_config(store_dataset_id(data_store)) or {}
+    if custom_projection in ('flower', 'sphere') and dataset.get('nasal_gap'):
         return {'display': 'block'}
     return {'display': 'none'}
 
@@ -837,7 +879,8 @@ def toggle_haa_controls(data_store):
     # but only for datasets that configure an haa_marker (chick: CYP26C1). Show its control then;
     # human/mouse never see it. The custom-embedding-container already hides it off the custom
     # embedding, so this gates on the marker alone.
-    if (data_store or {}).get('haa_marker'):
+    dataset = get_dataset_config(store_dataset_id(data_store)) or {}
+    if dataset.get('haa_marker'):
         return {'display': 'block'}
     return {'display': 'none'}
 
@@ -929,6 +972,7 @@ def restrict_group_styles(group_value_source, current_style):
 @log_callback_info
 def populate_group_controls(data_store, url_search, group_value_source):
     empty_split = [{'label': '(none)', 'value': ''}]
+    adata, data_store = load_dataset_state(data_store)
     if not data_store:
         return [], None, empty_split, '', [], None, [], None, [], None, 'figure', ['enabled'], [], None
 
@@ -946,16 +990,12 @@ def populate_group_controls(data_store, url_search, group_value_source):
     # libraries), so offer the (library x genotype) COMPOSITE as a group key and drop the
     # trailing demux sub-label(s) from the standalone group/split choices. The leading
     # column (library) stays groupable on its own.
-    replicate_columns = [c for c in (data_store.get('replicate_columns') or [])
-                         if c in categorical_cols]
-    demux_subcols = set(replicate_columns[1:]) if len(replicate_columns) >= 2 else set()
-    composite_key = _replicate_key(replicate_columns) if len(replicate_columns) >= 2 else None
+    categorical_cols, replicate_columns, composite_key, group_composite, standalone_cats, _ = _group_fields(adata, data_store)
     composite_label = (' x '.join(replicate_columns) + ' (demux donor)') if composite_key else None
-    standalone_cats = [c for c in categorical_cols if c not in demux_subcols]
 
-    group_options = ([{'label': composite_label, 'value': composite_key}] if composite_key else []) \
+    group_options = ([{'label': composite_label, 'value': group_composite}] if group_composite else []) \
         + [{'label': c, 'value': c} for c in standalone_cats]
-    valid_group = ({composite_key} if composite_key else set()) | set(standalone_cats)
+    valid_group = ({group_composite} if group_composite else set()) | set(standalone_cats)
 
     # Default grouping: shared-URL value, else the configured annotation column, else
     # 'annotation_refined', else the first standalone categorical column (NOT the demux
@@ -970,7 +1010,7 @@ def populate_group_controls(data_store, url_search, group_value_source):
     elif standalone_cats:
         group_value = standalone_cats[0]
     else:
-        group_value = composite_key
+        group_value = group_composite
 
     # Split-by includes a "(none)" option (value '') so a second grouping is optional.
     split_options = empty_split + group_options

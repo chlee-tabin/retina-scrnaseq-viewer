@@ -23,10 +23,17 @@ Numbers will not be bit-identical to the R figure (a different NB engine), but t
 methodology matches: pseudobulk, library-adjusted, region contrast.
 """
 import os
+import logging
+import threading
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
+from utils.validation import coerce_control, coerce_roi
+
+logger = logging.getLogger(__name__)
+_DE_FIT_SEMAPHORE = threading.Semaphore(1)
+DE_BUSY_MESSAGE = "Another differential-expression run is in progress; please retry in a minute."
 
 # Matches _REP_SEP in callbacks.main_callbacks: the library x genotype replicate key
 # is joined on this control char (cannot appear in obs string values).
@@ -103,7 +110,8 @@ def polygon_to_indices(verts, xs, ys):
     cells' own coordinates, independent of how the view is drawn. A polygon with < 3
     vertices selects nothing.
     """
-    if not verts or len(verts) < 3:
+    verts = coerce_roi({'A': verts})['A']
+    if len(verts) < 3:
         return []
     from matplotlib.path import Path
     path = Path(np.asarray(verts, dtype=float))
@@ -120,7 +128,35 @@ def replicate_labels(obs, replicate_columns):
     cols = list(replicate_columns or [])
     if not cols or any(c not in obs.columns for c in cols):
         return None
-    return obs[cols].astype(str).agg(SEP.join, axis=1).to_numpy()
+    valid = obs[cols].notna().all(axis=1)
+    for col in cols:
+        valid &= obs[col].astype('string').str.strip().ne('').fillna(False)
+    result = np.full(len(obs), None, dtype=object)
+    if valid.any():
+        result[valid.to_numpy()] = obs.loc[valid, cols].astype(str).agg(SEP.join, axis=1).to_numpy()
+    return result
+
+
+def _verified_counts(matrix):
+    """Sample up to 10k nonzero values without densifying a sparse count matrix."""
+    if sp.issparse(matrix):
+        values = matrix.data
+        idx = np.linspace(0, len(values) - 1, min(10000, len(values)), dtype=int)
+        sample = values[idx]
+    else:
+        flat = np.asarray(matrix).reshape(-1)
+        samples, n = [], 0
+        for start in range(0, flat.size, 10000):
+            chunk = flat[start:start + 10000]
+            chunk = chunk[chunk != 0][:10000 - n]
+            if chunk.size:
+                samples.append(chunk)
+            n += len(chunk)
+            if n >= 10000:
+                break
+        sample = np.concatenate(samples) if samples else np.array([])
+    return bool(np.all(np.isfinite(sample) & (sample >= 0)
+                       & (np.abs(sample - np.round(sample)) < 1e-2)))
 
 
 def get_raw_counts(adata, norm_target=None):
@@ -131,21 +167,27 @@ def get_raw_counts(adata, norm_target=None):
     figure's pseudobulk panel uses -- keeping the matrix sparse. Counts are rounded to
     integers at the pseudobulk level (aggregate_pseudobulk), as pydeseq2 requires.
     """
-    if adata.raw is not None:
+    if adata.raw is not None and _verified_counts(adata.raw.X):
         return adata.raw.X, np.asarray(adata.raw.var_names)
     X = adata.X
-    if norm_target and 'nCount_RNA' in adata.obs.columns:
-        nc = adata.obs['nCount_RNA'].to_numpy().astype(float)
-        scale = nc / float(norm_target)
-        if sp.issparse(X):
-            r = sp.csr_matrix(X, copy=True).astype(float)
-            r.data = np.expm1(r.data)               # log1p(CP) -> CP (sparsity preserved)
-            r = sp.diags(scale) @ r                 # row-scale by depth/target
-        else:
-            r = np.expm1(np.asarray(X, dtype=float)) * scale[:, None]
-        return r, np.asarray(adata.var_names)
-    # Last resort: assume .X already holds counts.
-    return X, np.asarray(adata.var_names)
+    try:
+        target = float(norm_target)
+    except (TypeError, ValueError, OverflowError):
+        target = 0.0
+    if np.isfinite(target) and target > 0 and 'nCount_RNA' in adata.obs.columns:
+        nc = pd.to_numeric(adata.obs['nCount_RNA'], errors='coerce').to_numpy(dtype=float)
+        scale = nc / target
+        if np.all(np.isfinite(scale) & (scale >= 0)):
+            with np.errstate(over='ignore', invalid='ignore'):
+                if sp.issparse(X):
+                    r = sp.csr_matrix(X, copy=True).astype(float)
+                    r.data = np.expm1(r.data)       # log1p(CP) -> CP (sparsity preserved)
+                    r = sp.diags(scale) @ r         # row-scale by depth/target
+                else:
+                    r = np.expm1(np.asarray(X, dtype=float)) * scale[:, None]
+            if _verified_counts(r):
+                return r, np.asarray(adata.var_names)
+    raise DEGError("raw counts unavailable for this dataset; differential expression is disabled")
 
 
 def aggregate_pseudobulk(counts, genes, replicate, side, min_cells=50):
@@ -158,7 +200,9 @@ def aggregate_pseudobulk(counts, genes, replicate, side, min_cells=50):
     Pseudobulks with < min_cells cells are dropped.
     """
     counts = counts.tocsr() if sp.issparse(counts) else np.asarray(counts)
-    keep = np.isin(side, ('A', 'B'))
+    min_cells = coerce_control('deg_min_cells', min_cells)
+    valid_rep = pd.Series(replicate).notna() & pd.Series(replicate).astype('string').str.strip().ne('').fillna(False)
+    keep = np.isin(side, ('A', 'B')) & valid_rep.to_numpy()
     rows = np.where(keep)[0]
     if rows.size == 0:
         return pd.DataFrame(), pd.DataFrame()
@@ -204,20 +248,31 @@ def choose_design(meta):
     n = len(meta)
     n_lib = libs.nunique()
     # A library must span BOTH sides for `library` to be a batch term rather than a
-    # proxy for side. And we need residual df: params = intercept + (n_lib-1) + 1(cond).
+    # proxy for side, and the fit needs residual df: params = intercept + (n_lib-1) + 1.
+    # These are decided before fitting and reported; fit errors are surfaced, not retried.
     spans_both = any(set(meta.loc[libs == L, 'side']) >= {'A', 'B'} for L in libs.unique())
     if n_lib >= 2 and spans_both and n > n_lib + 1:
         return "~library + condition", f"library-adjusted ({n_lib} libraries)"
     if n_lib < 2:
         reason = "single library"
     elif not spans_both:
-        reason = "library confounded with ROI"
+        reason = "library term not estimable: each library is on one side only"
     else:
-        reason = "too few replicates to adjust for library"
+        reason = "library term not estimable: too few pseudobulks to adjust for library"
     return "~condition", reason
 
 
 def run_deg(pb_df, meta, min_frac=0.5, min_cells=50):
+    """Allow one DE fit process-wide; refuse concurrent runs without queueing."""
+    if not _DE_FIT_SEMAPHORE.acquire(blocking=False):
+        raise DEGError(DE_BUSY_MESSAGE)
+    try:
+        return _run_deg(pb_df, meta, min_frac, coerce_control('deg_min_cells', min_cells))
+    finally:
+        _DE_FIT_SEMAPHORE.release()
+
+
+def _run_deg(pb_df, meta, min_frac=0.5, min_cells=50):
     """Pseudobulk NB-GLM DE (pydeseq2): side A vs B. Returns (results_df, info).
 
     results_df: columns gene, baseMean, log2FoldChange, pvalue, padj (positive
@@ -232,23 +287,19 @@ def run_deg(pb_df, meta, min_frac=0.5, min_cells=50):
     if pb_df.shape[1] == 0:
         raise DEGError("No genes passed the detection filter.")
 
-    from pydeseq2.dds import DeseqDataSet
-    from pydeseq2.ds import DeseqStats
-
     md = meta[['side', 'library']].rename(columns={'side': 'condition'}).copy()
     design, reason = choose_design(meta)
     try:
+        from pydeseq2.dds import DeseqDataSet
+        from pydeseq2.ds import DeseqStats
         dds = DeseqDataSet(counts=pb_df, metadata=md, design=design,
                            n_cpus=_N_CPUS, quiet=True)
         dds.deseq2()
-    except Exception:
-        # Full-rank / estimability backstop: drop the library covariate and retry.
-        design, reason = "~condition", reason + " (library term not estimable)"
-        dds = DeseqDataSet(counts=pb_df, metadata=md, design="~condition",
-                           n_cpus=_N_CPUS, quiet=True)
-        dds.deseq2()
-    st = DeseqStats(dds, contrast=["condition", "A", "B"], n_cpus=_N_CPUS, quiet=True)
-    st.summary()
+        st = DeseqStats(dds, contrast=["condition", "A", "B"], n_cpus=_N_CPUS, quiet=True)
+        st.summary()
+    except Exception as e:
+        logger.exception("Differential-expression fit failed for design %s", design)
+        raise DEGError("Differential-expression fit failed. Please retry or change the ROI.") from e
     res = (st.results_df[["baseMean", "log2FoldChange", "pvalue", "padj"]]
            .reset_index().rename(columns={'index': 'gene'}))
     info = {'design': design, 'design_reason': reason,
@@ -259,16 +310,22 @@ def run_deg(pb_df, meta, min_frac=0.5, min_cells=50):
 def deg_from_labels(adata, replicate_columns, labels, min_cells=50, min_frac=0.5,
                     norm_target=None):
     """End-to-end DE from resolved per-cell side `labels`. Returns (results_df, info)."""
+    min_cells = coerce_control('deg_min_cells', min_cells)
     rep = replicate_labels(adata.obs, replicate_columns)
     if rep is None:
         raise NoReplicate()
     counts, genes = get_raw_counts(adata, norm_target)
+    excluded = int((np.isin(labels, ('A', 'B')) & pd.isna(rep)).sum())
     pb_df, meta = aggregate_pseudobulk(counts, genes, rep, labels, min_cells=min_cells)
     n_pb_a = int((meta.get('side') == 'A').sum()) if len(meta) else 0
     n_pb_b = int((meta.get('side') == 'B').sum()) if len(meta) else 0
     if n_pb_a < 2 or n_pb_b < 2:
-        raise InsufficientReplicates(n_pb_a, n_pb_b, min_cells)
-    return run_deg(pb_df, meta, min_frac=min_frac, min_cells=min_cells)
+        error = InsufficientReplicates(n_pb_a, n_pb_b, min_cells)
+        error.n_excluded_replicate = excluded
+        raise error
+    res, info = run_deg(pb_df, meta, min_frac=min_frac, min_cells=min_cells)
+    info['n_excluded_replicate'] = excluded
+    return res, info
 
 
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,7 @@
 import json
 import base64
 from urllib.parse import parse_qs, urlencode
+from utils.validation import sanitize_state
 
 def encode_state(state_dict):
     """Encode application state for URL sharing"""
@@ -11,7 +12,7 @@ def decode_state(encoded_state):
     """Decode application state from URL"""
     try:
         state_json = base64.urlsafe_b64decode(encoded_state).decode()
-        return json.loads(state_json)
+        return sanitize_state(json.loads(state_json))
     except Exception:
         return None
 

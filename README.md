@@ -41,9 +41,9 @@ alignment retained as a labeled **legacy** entry:
 
 | ID | Title | Cells | Source / attribution |
 |----|-------|-------|----------------------|
-| `chick_rpc` | Chick Retinal Progenitor Cells | 29,025 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Emerson et al.) |
-| `chick_full` | Chick Retina — Full (all cell classes) | 85,135 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Emerson et al.); UMAP-navigable, no DV/NT scores (those apply to `chick_rpc`) |
-| `human_rpc` | Human Retinal Progenitor Cells | 21,793 | Reprocessed from GEO **GSE138002** (Sridhar et al.), **GSE234963**, **GSE246169** |
+| `chick_rpc` | Chick Retinal Progenitor Cells | 29,025 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Ghinia Tegla et al. 2020) |
+| `chick_full` | Chick Retina — Full (all cell classes) | 85,135 | This study (Cepko Lab) + 1 reprocessed public library, GEO **GSE142244** (Ghinia Tegla et al. 2020); UMAP-navigable, no DV/NT scores (those apply to `chick_rpc`) |
+| `human_rpc` | Human Retinal Progenitor Cells | 21,793 | Reprocessed from GEO **GSE138002** (Lu et al. 2020), **GSE234963** (Dorgau et al. 2024), **GSE246169** (Wohlschlegel et al. 2023) |
 | `mouse_rpc` | Mouse Retinal Progenitor Cells | 26,505 | Reprocessed (Cell Ranger 9.0.1 / GRCm39) from GEO **GSE118614** (Clark et al.), **GSE139904** (Balasubramanian et al., control cells only), **GSE149040** (Wu et al.), **GSE122466** (Lo Giudice et al.) |
 | `mouse_rpc_legacy` | Mouse Retinal Progenitor Cells (legacy) | 25,202 | **Superseded** — original four-library alignment (older reference) from GEO **GSE139904**, **GSE118614**, which pooled wild-type + Fgfr1/2-mutant cells. Retained only for reproducibility; not for new analysis. |
 

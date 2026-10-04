@@ -38,7 +38,7 @@ def _message_figure(text):
 
 # A distinct, colour-blind-aware qualitative palette for categorical colouring when
 # a dataset does not configure an explicit `annotation_colors` map. Replaces plotly's
-# pale, fast-recycling Set3 (the source of the "awful" full-chick categorical scheme).
+# pale, fast-recycling Set3 to improve separation of full-chick categories.
 CATEGORICAL_FALLBACK = px.colors.qualitative.Dark24
 
 
@@ -260,7 +260,7 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             cols=n_cols,
             subplot_titles=[str(cat) for cat in categories],
             horizontal_spacing=0.05,  # Reduced from 0.1
-            vertical_spacing=0.05     # Reduced from 0.1
+            vertical_spacing=min(0.05, 1.0 / max(1, n_rows - 1))
         )
         
         # Create a histogram for each category
@@ -304,7 +304,7 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
                     x=x_centers,
                     y=y_centers,
                     colorscale='viridis',
-                    customdata=hover_text,
+                    customdata=np.asarray(hover_text, dtype=object).T,
                     hovertemplate='%{customdata}',
                     hoverongaps=False,
                     showscale=False  # Hide individual colorbars
@@ -389,7 +389,7 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             labels={'x': x_label, 'y': y_label, 'color': color_label},
             title=f'Binned visualization - {embedding}',
             color_continuous_scale='viridis',
-            zmin=0,
+            zmin=_color_min(H, color_vmax),
             zmax=color_vmax,
             aspect='equal'
         )
@@ -412,7 +412,7 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
         
         # Update traces with hover template and fix y-axis orientation
         fig.update_traces(
-            customdata=hover_text,
+            customdata=np.asarray(hover_text, dtype=object).T,
             hovertemplate='%{customdata}',
             hoverongaps=False  # Disable hover for empty bins
         )
@@ -436,6 +436,12 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
     return fig
 
 
+def _color_min(values, maximum):
+    """Signed metadata uses a symmetric range; non-negative expression starts at zero."""
+    finite = np.asarray(values)[np.isfinite(values)]
+    return -float(maximum) if finite.size and finite.min() < 0 else 0.0
+
+
 def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_cells=1,
                  color_floor=0.05, stat='mean'):
     """Compute a per-bin statistic of a continuous value over a 2D (x, y) grid.
@@ -454,7 +460,7 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
     Returns
     -------
     H_mean : 2D float array
-        Per-bin statistic (NaN for bins below the cell floor), clipped to vmax.
+        Unclipped per-bin statistic (NaN for bins below the cell floor).
     H_counts : 2D float array
         Cells per bin.
     xedges, yedges : 1D arrays
@@ -503,7 +509,13 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
     # the floor is small (so low-but-real detection still renders) and vmax is
     # capped at 1.0 (it is a fraction).
     floor = 0.01 if stat == 'frac_pos' else float(color_floor)
-    pos = H_mean[valid & np.isfinite(H_mean) & (H_mean > 0)]
+    finite_values = H_mean[valid & np.isfinite(H_mean)]
+    # Signed metadata uses magnitude-based colour clipping and a symmetric range.
+    # Expression retains its existing positive-bin percentile / zero lower limit.
+    if finite_values.size and finite_values.min() < 0:
+        pos = np.abs(finite_values[finite_values != 0])
+    else:
+        pos = finite_values[finite_values > 0]
     if pos.size and percentile < 1.0:
         vmax = float(np.nanpercentile(pos, percentile * 100))
     elif pos.size:
@@ -513,8 +525,6 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
     vmax = max(vmax, floor)
     if stat == 'frac_pos':
         vmax = min(vmax, 1.0)
-    H_mean = np.where(H_mean > vmax, vmax, H_mean)
-
     return H_mean, H_counts, xedges, yedges, vmax
 
 
@@ -596,6 +606,7 @@ def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, 
         min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
     vmax = max(float(vmax), 1e-9)
     cap = float(cmax) if cmax is not None else vmax
+    cmin = _color_min(H, cap)
     nb = int(bin_size)
 
     # Warp the grid VERTICES ((nb+1) x (nb+1)); keep gore + rho for rip detection.
@@ -622,7 +633,7 @@ def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, 
             gs = gore_v[i:i + 2, j:j + 2]
             if gs.min() != gs.max() and rho_v[i:i + 2, j:j + 2].min() > rho_join:
                 continue   # quad straddles a rip beyond the joined centre -> real slit
-            b = int(min(n_color_bins - 1, max(0, np.floor(z / cap * n_color_bins))))
+            b = int(min(n_color_bins - 1, max(0, np.floor((z - cmin) / (cap - cmin) * n_color_bins))))
             xs = [Xv[i, j], Xv[i, j + 1], Xv[i + 1, j + 1], Xv[i + 1, j], Xv[i, j], None]
             ys = [Yv[i, j], Yv[i, j + 1], Yv[i + 1, j + 1], Yv[i + 1, j], Yv[i, j], None]
             buckets.setdefault(b, ([], []))
@@ -643,7 +654,7 @@ def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, 
         cbar.update(x=colorbar_x, len=0.9, thickness=12)
     traces.append(go.Scatter(   # invisible carrier for the continuous colorbar
         x=[float(np.nanmean(Xc))], y=[float(np.nanmean(Yc))], mode='markers',
-        marker=dict(colorscale='viridis', cmin=0, cmax=cap, color=[0], size=0.1,
+        marker=dict(colorscale='viridis', cmin=cmin, cmax=cap, color=[0], size=0.1,
                     opacity=0, showscale=showscale, colorbar=cbar),
         hoverinfo='skip', showlegend=False))
     traces.append(go.Scatter(   # invisible bin-centre markers carrying the hover read-out
@@ -1013,6 +1024,7 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
         min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
     vmax = max(float(vmax), 1e-9)
     cap = float(cmax) if cmax is not None else vmax
+    cmin = _color_min(H, cap)
     nb = int(bin_size)
 
     # Warp the (nb+1)x(nb+1) grid vertices onto the sphere; flat index = i*(nb+1) + j.
@@ -1047,7 +1059,7 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
     traces = [
         go.Mesh3d(  # flatshading + ambient-only lighting so the colour IS the statistic
             x=Xv, y=Yv, z=Zv, i=ti, j=tj, k=tk, intensity=face_val, intensitymode='cell',
-            colorscale='viridis', cmin=0.0, cmax=cap, colorbar=cbar, showscale=showscale,
+            colorscale='viridis', cmin=cmin, cmax=cap, colorbar=cbar, showscale=showscale,
             flatshading=True, hoverinfo='skip',
             lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0)),
         go.Scatter3d(  # invisible bin-centre markers carrying the hover read-out
@@ -1536,6 +1548,12 @@ def create_group_expression_figure(
     if len(d) == 0:
         return _message_figure("No data to plot for this selection.")
     d[group_by] = d[group_by].astype(str)
+    if 'replicate' in d:
+        valid_rep = d['replicate'].notna() & d['replicate'].astype('string').str.strip().ne('').fillna(False)
+        n_excluded_replicate = int((~valid_rep).sum())
+        d.loc[~valid_rep, 'replicate'] = None
+    else:
+        n_excluded_replicate = 0
 
     order = _resolve_order(d[group_by], category_order=category_order, by_series=d['expr'])
     pos_index = {g: i for i, g in enumerate(order)}
@@ -1588,7 +1606,7 @@ def create_group_expression_figure(
     if draw_panel_a:
         if value_is_gene:
             # log1p(CP) pseudobulk: reconstruct raw counts, sum per replicate, renormalise.
-            cells = d[d['ncount'].notna()].copy()
+            cells = d[d['ncount'].notna() & d['replicate'].notna()].copy()
             cells['raw'] = np.expm1(cells['expr'].to_numpy()) * cells['ncount'].to_numpy() / float(norm_target)
             cells = cells[np.isfinite(cells['raw'])]  # drop any non-finite reconstruction
             grouped = cells.groupby([group_by, 'replicate'], observed=True)
@@ -1711,6 +1729,12 @@ def create_group_expression_figure(
                            xref='paper', yref='paper', x=0.5, y=1.0, yanchor='bottom',
                            showarrow=False, font=dict(size=11, color='#a06000'))
 
+    if n_excluded_replicate:
+        fig.add_annotation(
+            text=f"{n_excluded_replicate:,} cells excluded from pseudobulk for missing replicate labels.",
+            xref='paper', yref='paper', x=0.0, y=-0.28, xanchor='left',
+            showarrow=False, font=dict(size=11, color='#666'))
+
     for r in range(1, rows + 1):
         fig.update_xaxes(
             tickmode='array', tickvals=list(range(n_groups)), ticktext=order,
@@ -1720,6 +1744,6 @@ def create_group_expression_figure(
         plot_bgcolor='white',
         violinmode='overlay',
         height=780 if draw_panel_a else 480,
-        margin=dict(t=60, l=80, r=30, b=140),
+        margin=dict(t=60, l=80, r=30, b=180 if n_excluded_replicate else 140),
     )
     return fig
