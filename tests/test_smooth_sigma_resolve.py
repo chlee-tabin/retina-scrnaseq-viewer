@@ -3,9 +3,13 @@
 The path most likely to regress: a pre-slider share link (schema v<3) must still
 render human_rpc at the old 0.5, not the corrected 2.0 default.
 
-Run: ~/repos/_retina_viewer_venv/bin/python test_smooth_sigma_resolve.py
+Run: python tests/test_smooth_sigma_resolve.py
 (or via pytest)
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from utils.smoothing import (resolve_smooth_sigma, LEGACY_SMOOTH_SIGMA,
                              SLIDER_SCHEMA_VERSION)
 

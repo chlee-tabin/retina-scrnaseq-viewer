@@ -7,6 +7,22 @@ the backward-compat resolution is unit-testable without importing the Dash app.
 
 import math
 
+DEFAULT_MIN_CELLS_PER_BIN = 5
+
+
+def smooth_grid(values, valid, sigma, mode='zero_fill'):
+    """Smooth valid bins; keep the manuscript's zero-fill behaviour by default."""
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    filled = np.where(valid, values, 0.0)
+    if sigma and sigma > 0:
+        filled = gaussian_filter(filled, sigma=float(sigma))
+        if mode == 'mask_normalised':
+            weight = gaussian_filter(np.asarray(valid, dtype=float), sigma=float(sigma))
+            np.divide(filled, weight, out=filled, where=weight > 0)
+    return np.where(valid, filled, np.nan)
+
 # Share-state schema version at which the smoothing slider was introduced. A shared
 # link stamped below this (or with no version at all = a pre-slider v2 link) predates
 # the slider, so its smoothing was the fixed per-dataset config value of the day --

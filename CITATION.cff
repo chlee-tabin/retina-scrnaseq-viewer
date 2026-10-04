@@ -2,9 +2,32 @@ cff-version: 1.2.0
 message: "If you use this viewer, please cite it as below, together with the accompanying manuscript and the original GEO accessions listed in the README."
 title: "Retina scRNA-seq Pattern Viewer"
 type: software
+version: "0.32"
+date-released: "2026-10-04"
 authors:
   - family-names: Lee
     given-names: ChangHee
 license: MIT
 repository-code: "https://github.com/chlee-tabin/retina-scrnaseq-viewer"
 url: "https://huggingface.co/spaces/chlee-tabin/retina-scrnaseq-viewer"
+preferred-citation:
+  type: article
+  title: "Integration of in situ hybridization and scRNA-seq data provides a 2D topographical map of the developing retina across species"
+  doi: "10.64898/2026.01.04.697548"
+  url: "https://doi.org/10.64898/2026.01.04.697548"
+  year: 2026
+  authors:
+    - family-names: Joisher
+      given-names: Heer N. V.
+    - family-names: Lee
+      given-names: ChangHee
+    - family-names: Prabhakara
+      given-names: Chaitra
+    - family-names: van der Weide
+      given-names: Isabella
+    - family-names: Si
+      given-names: Yichen
+    - family-names: Lonfat
+      given-names: Nicholas
+    - family-names: Cepko
+      given-names: Constance

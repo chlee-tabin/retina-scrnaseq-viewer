@@ -1,286 +1,49 @@
 from dash import Input, Output, State, callback, ctx, no_update
-import logging
 from utils.error_handling import handle_callback_error, log_callback_info
-from utils.state import create_share_url, parse_url_state
-from utils.validation import coerce_control, coerce_roi
+from utils.state import (create_share_url, parse_url_state, share_states, schema_keys,
+                         restore_outputs, restore_values, capture_state)
 from utils.data_loading import get_dataset_config
 
-logger = logging.getLogger(__name__)
 
-# Restore controls from a shared URL. This callback owns only the controls no other
-# callback restores: it sets the dataset (which triggers update_data, the url-aware
-# owner of embedding/colour/gene), plus the global view controls. The custom axes are
-# restored by update_custom_embedding_controls and every expression-by-group control
-# by populate_group_controls -- each reads the same URL state. prevent_initial_call=
-# 'initial_duplicate' lets this fire on the very first render so a pasted link works.
+# Option-populating owners restore their controls from the same STATE_SCHEMA.
 @callback(
-    [Output('dataset-select', 'value', allow_duplicate=True),
-     Output('viz-mode', 'value', allow_duplicate=True),
-     Output('bin-number-slider', 'value', allow_duplicate=True),
-     Output('percentile-slider', 'value', allow_duplicate=True),
-     Output('enable-binning', 'value', allow_duplicate=True),
-     Output('enable-smoothing', 'value', allow_duplicate=True),
-     Output('bin-stat', 'value', allow_duplicate=True),
-     Output('plot-type', 'value', allow_duplicate=True),
-     Output('compare-genes', 'value', allow_duplicate=True),
-     Output('gene-select-2', 'value', allow_duplicate=True),
-     Output('compare-shared-scale', 'value', allow_duplicate=True),
-     Output('custom-projection', 'value', allow_duplicate=True),
-     Output('wm-rho-nt', 'value', allow_duplicate=True),
-     Output('wm-rho-dv', 'value', allow_duplicate=True),
-     Output('wm-gap', 'value', allow_duplicate=True),
-     Output('wm-stretch', 'value', allow_duplicate=True),
-     Output('wm-cuts', 'value', allow_duplicate=True),
-     Output('wm-symmetric', 'value', allow_duplicate=True),
-     Output('wm-dewarp', 'value', allow_duplicate=True),
-     Output('wm-pow', 'value', allow_duplicate=True),
-     Output('wm-gap-mode', 'value', allow_duplicate=True),
-     Output('wm-gap-frac', 'value', allow_duplicate=True),
-     Output('wm-pole', 'value', allow_duplicate=True),
-     Output('group-value-source', 'value', allow_duplicate=True),
-     Output('nasal-gap-layers', 'value', allow_duplicate=True),
-     Output('nasal-gap-frac', 'value', allow_duplicate=True),
-     Output('nasal-gap-dorsal', 'value', allow_duplicate=True),
-     Output('nasal-gap-ventral', 'value', allow_duplicate=True),
-     Output('haa-mode', 'value', allow_duplicate=True),
-     Output('sphere-camera-store', 'data', allow_duplicate=True),
-     Output('roi-vertices-store', 'data', allow_duplicate=True),
-     Output('volcano-lfc-thresh', 'value', allow_duplicate=True),
-     Output('volcano-padj-thresh', 'value', allow_duplicate=True),
-     Output('deg-min-cells', 'value', allow_duplicate=True)],
-    [Input('url', 'search'),
-     Input('url', 'pathname')],
-    prevent_initial_call='initial_duplicate'
+    restore_outputs('url'),
+    [Input('url', 'search'), Input('url', 'pathname')],
+    prevent_initial_call='initial_duplicate',
 )
 @handle_callback_error
 @log_callback_info
 def initialize_from_url(search, pathname):
-    n_out = 34
-    triggered_id = ctx.triggered_id
-    # Pure pathname navigation (no new shared state): leave controls untouched.
-    if triggered_id == 'url.pathname' or not search:
-        return (no_update,) * n_out
+    if not search:
+        return (no_update,) * len(schema_keys('url'))
+    triggered = getattr(ctx, 'triggered_prop_ids', {})
+    if 'url.pathname' in triggered and 'url.search' not in triggered:
+        return (no_update,) * len(schema_keys('url'))
     state = parse_url_state(search)
-    if not state or get_dataset_config(state.get('dataset')) is None:
-        return (no_update,) * n_out
+    dataset = get_dataset_config(state.get('dataset')) if state else None
+    if dataset is None:
+        return (no_update,) * len(schema_keys('url'))
+    return restore_values(state, 'url', dataset)
 
-    return (
-        state.get('dataset', no_update),
-        state.get('mode', 'random'),
-        state.get('bins', no_update),
-        state.get('percentile', no_update),
-        state.get('enable_binning', no_update),
-        state.get('enable_smoothing', no_update),
-        state.get('bin_stat', no_update),
-        state.get('plot_type', no_update),
-        state.get('compare_genes', no_update),
-        state.get('gene2', no_update),
-        state.get('compare_shared_scale', no_update),
-        state.get('custom_projection', 'raw'),
-        state.get('wm_rho_nt', no_update),
-        state.get('wm_rho_dv', no_update),
-        state.get('wm_gap', no_update),
-        state.get('wm_stretch', no_update),
-        state.get('wm_cuts', no_update),
-        state.get('wm_symmetric', no_update),
-        state.get('wm_dewarp', no_update),
-        state.get('wm_pow', no_update),
-        state.get('wm_gap_mode', no_update),
-        state.get('wm_gap_frac', no_update),
-        state.get('wm_pole', no_update),
-        state.get('group_value_source', no_update),
-        # Uncaptured-nasal cap + sphere camera. Absent in pre-v0.221 links -> no_update ->
-        # the controls keep their R2.5 defaults and the camera its face-on default
-        # (backward compatible: old URLs still load, just without these tweaks).
-        state.get('ng_layers', no_update),
-        state.get('ng_frac', no_update),
-        state.get('ng_dorsal', no_update),
-        state.get('ng_ventral', no_update),
-        state.get('haa_mode', no_update),
-        state.get('sphere_cam', no_update),
-        # share_url OMITS these ROI-DEG keys when empty/default, so an absent key in a shared
-        # link means "the sharer had no ROI / defaults" -> restore the DEFAULT (clear / 1.0 /
-        # 0.05 / 50), not no_update, so a link faithfully reproduces the shared state instead of
-        # leaving whatever the recipient already had. (Reached only when a ?state= is present.)
-        state.get('roi', {'A': [], 'B': []}),  # absent -> clear any existing ROI
-        state.get('volcano_lfc', 1.0),
-        state.get('volcano_padj', 0.05),
-        state.get('deg_min_cells', 50),
-    )
 
 @callback(
     [Output('share-url', 'style', allow_duplicate=True),
      Output('share-url', 'value', allow_duplicate=True)],
     Input('share-button', 'n_clicks'),
-    [State('dataset-select', 'value'),
-     State('embedding-select', 'value'),
-     State('color-select', 'value'),
-     State('gene-select', 'value'),
-     State('viz-mode', 'value'),
-     State('custom-x-select', 'value'),
-     State('custom-y-select', 'value'),
-     State('custom-projection', 'value'),
-     State('bin-number-slider', 'value'),
-     State('percentile-slider', 'value'),
-     State('enable-binning', 'value'),
-     State('enable-smoothing', 'value'),
-     State('smooth-sigma-slider', 'value'),
-     State('bin-stat', 'value'),
-     State('compare-genes', 'value'),
-     State('gene-select-2', 'value'),
-     State('compare-shared-scale', 'value'),
-     State('plot-type', 'value'),
-     State('group-gene-select', 'value'),
-     State('group-by-select', 'value'),
-     State('group-split-select', 'value'),
-     State('group-style', 'value'),
-     State('gene-module-select', 'value'),
-     State('group-positive-only', 'value'),
-     State('group-replicate-select', 'value'),
-     State('wm-rho-nt', 'value'),
-     State('wm-rho-dv', 'value'),
-     State('wm-gap', 'value'),
-     State('wm-stretch', 'value'),
-     State('wm-cuts', 'value'),
-     State('wm-symmetric', 'value'),
-     State('wm-dewarp', 'value'),
-     State('wm-pow', 'value'),
-     State('wm-gap-mode', 'value'),
-     State('wm-gap-frac', 'value'),
-     State('wm-pole', 'value'),
-     State('group-value-source', 'value'),
-     State('group-meta-select', 'value'),
-     State('nasal-gap-layers', 'value'),
-     State('nasal-gap-frac', 'value'),
-     State('nasal-gap-dorsal', 'value'),
-     State('nasal-gap-ventral', 'value'),
-     State('haa-mode', 'value'),
-     State('sphere-camera-store', 'data'),
-     State('roi-vertices-store', 'data'),
-     State('volcano-lfc-thresh', 'value'),
-     State('volcano-padj-thresh', 'value'),
-     State('deg-min-cells', 'value'),
-     State('url', 'href')],
-    prevent_initial_call=True
+    share_states() + [State('url', 'href')],
+    prevent_initial_call=True,
 )
 @handle_callback_error
 @log_callback_info
-def share_url(n_clicks, dataset, embedding, color_by, gene, viz_mode,
-              custom_x, custom_y, custom_projection, bin_number, percentile, enable_binning,
-              enable_smoothing, smooth_sigma, bin_stat, compare_genes, gene2, compare_shared_scale,
-              plot_type, group_gene, group_by, group_split, group_style,
-              gene_module, group_positive_only, group_replicate,
-              wm_rho_nt, wm_rho_dv, wm_gap, wm_stretch, wm_cuts,
-              wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
-              group_value_source, group_meta,
-              ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode, sphere_cam,
-              roi_verts, volcano_lfc, volcano_padj, deg_min_cells, current_url):
-    if n_clicks is None:
+def share_url(n_clicks, *values):
+    if not n_clicks:
         return {'display': 'none'}, ''
-
-    volcano_lfc = coerce_control('volcano_lfc', volcano_lfc)
-    volcano_padj = coerce_control('volcano_padj', volcano_padj)
-    deg_min_cells = coerce_control('deg_min_cells', deg_min_cells)
-
-    # Share-state schema v2 (see docs/VIEWER_SPEC.md). Only the keys relevant to the
-    # current view are written, so URLs stay lean; absent keys restore to defaults.
-    state_dict = {
-        'v': 3,  # bumped from 2 when the smoothing slider landed (adds smooth_sigma)
-        'dataset': dataset,
-        'embedding': embedding,
-        'color': color_by,
-        'mode': viz_mode,
-        'plot_type': plot_type,
-    }
-    # Smoothing-slider sigma (v0.31+), written for EVERY new link (not just the spatial
-    # view) so a recipient who later switches to the map gets the sharer's strength.
-    # A pre-slider link is identified by its schema version (v<3), so resolve_smooth_sigma
-    # uses the OLD per-dataset default only for genuinely old links -- this stays correct
-    # even if a future change makes this write conditional, unlike a key-absence test.
-    state_dict['smooth_sigma'] = smooth_sigma
-
-    if color_by == 'gene_expression' and gene:
-        state_dict['gene'] = gene
-
-    # Two-gene side-by-side comparison.
-    if compare_genes:
-        state_dict['compare_genes'] = compare_genes
-        if gene2:
-            state_dict['gene2'] = gene2
-        if compare_shared_scale:
-            state_dict['compare_shared_scale'] = compare_shared_scale
-
-    # Spatial-map / binning controls (only meaningful on the custom DV/NT embedding).
-    if embedding == 'custom_embedding':
-        state_dict['custom_x'] = custom_x
-        state_dict['custom_y'] = custom_y
-        # HAA-pointer mode (applies to all projections incl. raw NT/DV axes; chick-gated on load).
-        if haa_mode:
-            state_dict['haa_mode'] = haa_mode
-        if custom_projection and custom_projection != 'raw':
-            state_dict['custom_projection'] = custom_projection
-            # Advanced whole-mount projection parameters (only when the flower view is on).
-            state_dict['wm_rho_nt'] = wm_rho_nt
-            state_dict['wm_rho_dv'] = wm_rho_dv
-            state_dict['wm_gap'] = wm_gap
-            state_dict['wm_stretch'] = wm_stretch
-            state_dict['wm_cuts'] = wm_cuts
-            state_dict['wm_symmetric'] = wm_symmetric
-            state_dict['wm_dewarp'] = wm_dewarp
-            state_dict['wm_pow'] = wm_pow
-            state_dict['wm_gap_mode'] = wm_gap_mode
-            state_dict['wm_gap_frac'] = wm_gap_frac
-            state_dict['wm_pole'] = wm_pole
-            # Uncaptured-nasal-cap controls (flower + sphere; restore to R2.5 if absent).
-            state_dict['ng_layers'] = ng_layers
-            state_dict['ng_frac'] = ng_frac
-            state_dict['ng_dorsal'] = ng_dorsal
-            state_dict['ng_ventral'] = ng_ventral
-            # 3D-sphere viewpoint: the shared camera (one per figure, applied to both the
-            # single panel and each of the 2 compare panels). Only when set (user rotated).
-            if custom_projection == 'sphere' and sphere_cam:
-                state_dict['sphere_cam'] = sphere_cam
-        state_dict['bins'] = bin_number
-        state_dict['percentile'] = percentile
-        state_dict['enable_binning'] = enable_binning
-        state_dict['enable_smoothing'] = enable_smoothing
-        state_dict['bin_stat'] = bin_stat
-
-    # Expression-by-group controls.
-    if plot_type == 'group':
-        state_dict['group_by'] = group_by
-        state_dict['group_split'] = group_split
-        state_dict['group_gene'] = group_gene
-        state_dict['group_style'] = group_style
-        state_dict['gene_module'] = gene_module
-        state_dict['group_positive_only'] = group_positive_only
-        state_dict['group_replicate'] = group_replicate
-        state_dict['group_value_source'] = group_value_source
-        if group_meta:
-            state_dict['group_meta'] = group_meta
-
-    # Volcano significance cutoffs -- encoded only when changed from the manuscript defaults
-    # (|log2FC|>1, adj p<0.05) to keep default URLs lean. Additive optional keys.
-    if volcano_lfc is not None and float(volcano_lfc) != 1.0:
-        state_dict['volcano_lfc'] = float(volcano_lfc)
-    if volcano_padj is not None and float(volcano_padj) != 0.05:
-        state_dict['volcano_padj'] = float(volcano_padj)
-    # ROI min-cells floor -- part of the DE run signature, so a shared ROI must carry a
-    # non-default floor or the recipient silently reruns at 50 (different volcano / guard).
-    if deg_min_cells is not None and int(deg_min_cells) != 50:
-        state_dict['deg_min_cells'] = int(deg_min_cells)
-
-    # ROI polygons (the differential-expression setup). Additive optional key -- old
-    # links lack it (restore to no ROI) and older viewers ignore it, so the URL stays
-    # backward compatible. Coords rounded to keep a handful of vertices compact.
-    roi = coerce_roi(roi_verts)
-    roi_clean = {k: [[round(float(p[0]), 4), round(float(p[1]), 4)]
-                     for p in (roi.get(k) or [])]
-                 for k in ('A', 'B')}
-    if any(roi_clean.values()):
-        state_dict['roi'] = roi_clean
-
-    base_url = current_url.split('?')[0]
-    url_value = create_share_url(base_url, state_dict)
-
-    return {'display': 'block', 'width': '100%', 'marginTop': '10px'}, url_value
+    controls, current_url = values[:-1], values[-1]
+    dataset_id = dict(zip(schema_keys(), controls)).get('dataset')
+    dataset = get_dataset_config(dataset_id)
+    if dataset is None:
+        return no_update, no_update
+    # Share-state schema v4: capture every control, including smoothing mode.
+    state = capture_state(controls, dataset)
+    url = create_share_url(current_url.split('?')[0], state)
+    return {'display': 'block', 'width': '100%', 'marginTop': '10px'}, url

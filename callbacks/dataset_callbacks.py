@@ -1,6 +1,7 @@
 from dash import Input, Output, State, callback
 from utils.error_handling import handle_callback_error, log_callback_info
-from utils.data_loading import gene_search_options
+from utils.data_loading import gene_search_options, get_dataset_config
+from utils.state import state_for_dataset, restore_state
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,12 +20,18 @@ logger = logging.getLogger(__name__)
     [Input('color-select', 'value'),
      Input('data-store', 'data'),
      Input('gene-select', 'search_value')],
+    [State('gene-select', 'value'), State('url', 'search')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_gene_select(color_value, data_store, search_value):
+def update_gene_select(color_value, data_store, search_value, current_gene, url_search):
     # The gene picker is only meaningful when colouring by gene expression.
     if color_value != 'gene_expression' or not data_store or 'genes' not in data_store:
         return {'display': 'none'}, []
-    return {'display': 'block'}, gene_search_options(data_store['genes'], search_value)
+    dataset_id = data_store.get('dataset_id')
+    state = state_for_dataset(url_search, dataset_id)
+    dataset = get_dataset_config(dataset_id) or {}
+    shared_gene = restore_state(state, dataset)['gene'] if state else None
+    selected = shared_gene or current_gene
+    return {'display': 'block'}, gene_search_options(data_store['genes'], search_value, selected)

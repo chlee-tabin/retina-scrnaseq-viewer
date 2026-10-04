@@ -44,7 +44,7 @@ PyYAML==6.0.2
 requests==2.32.3
 retrying==1.3.4
 scikit-learn==1.5.2
-scipy>=1.15.1
+scipy==1.17.1
 seaborn==0.13.2
 session-info2==0.1.2
 six==1.17.0
@@ -58,6 +58,6 @@ urllib3==2.3.0
 Werkzeug==3.0.6
 zipp==3.21.0
 psutil==5.9.8
-huggingface_hub>=0.25.0
+huggingface_hub==1.16.1
 gunicorn==23.0.0
 pydeseq2==0.5.4

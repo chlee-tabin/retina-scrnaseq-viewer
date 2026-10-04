@@ -1,5 +1,7 @@
-version: 1.2
-last_updated: "2026-05-31"
+version: 1.3
+last_updated: "2026-10-04"
+
+hf_data_revision: "2c21052aad5203a64b5798474ed2045fca8e3733"
 
 # Datasets served by the viewer. Paths are resolved relative to DATA_DIR
 # (default "data"); a leading "data/" is stripped and re-joined under DATA_DIR
@@ -15,6 +17,9 @@ datasets:
     title: "Chick Retinal Progenitor Cells"
     description: "29,025 chick (Gallus gallus) retinal progenitor cells with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Ghinia Tegla et al. 2020, originally GSE142244)."
     file_path: "data/20250604_chick_RPC.h5ad"
+    sha256: "7e5f363aeb58f0c9093d73cb6f82532c36c51a130bd9a4d1edd25274ea0308ea"
+    wholemount_params:
+      stretch_bumps: [[180.0, 0.60, 50.0], [225.0, 0.85, 50.0], [45.0, 0.40, 50.0]]
     last_updated: "2025-06-04"
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
     default_gene: "FGF8"
@@ -30,10 +35,12 @@ datasets:
     smooth_sigma: 2.0          # Gaussian smoothing sigma for the binned spatial view
     min_cells_per_bin: 5       # bins with fewer cells are masked (greyed)
     replicate_columns: ["library", "genotype"]  # pseudobulk unit for the group figure (Panel A)
-    # Manuscript area-DEG gates (scripts/analysis/area_significant_deg.R) as ROI presets, so
+    # Manuscript area-DEG gates (scripts/figures/supptables1_2_area_deg.R in
+    # https://github.com/chlee-tabin/retina-spatial-scrna-analysis) as ROI presets, so
     # "Load figure region" reproduces a Fig 6H volcano panel (HAA -> CYP26C1 up, FOXD1 down).
     # Axis-aligned rectangle in NT.Score (x) x DV.Score (y): a cell is inside when its score
-    # falls in [nt[0]/n, (nt[1]+1)/n) x [dv[0]/n, (dv[1]+1)/n) of each axis's data range.
+    # has binned indices nt[0] <= NT bin < nt[1]+1 and dv[0] <= DV bin < dv[1]+1.
+    # Bins are half-open; a score at the axis maximum has index n and is excluded.
     figure_regions:
       - {name: "HAA — CYP26C1 (Fig 6H)",  n: 10, nt: [6, 7], dv: [4, 5]}
       - {name: "Ventral — VAX1",          n: 7,  nt: [0, 6], dv: [0, 2]}
@@ -59,9 +66,13 @@ datasets:
     title: "Chick Retina — Full (all cell classes)"
     description: "85,135 chick (Gallus gallus) embryonic retinal cells spanning all major classes — retinal progenitors (RPC), neurogenic cells, cone photoreceptors, horizontal cells, amacrine subtypes (GABAergic/glycinergic), and retinal ganglion cells, plus vascular/endothelial and interferon-responding cells. Navigable by UMAP (Harmony-integrated). In-house data (Cepko Lab), deposited at GEO GSE322831; includes one reprocessed publicly available library (Ghinia Tegla et al. 2020, GSE142244). Cell-type annotations were vetted with a uniquely-expressed-gene (U-method) specificity analysis and field-grounded horizontal/amacrine separation; cycling precursors are labeled separately. This full object has no inferred DV/NT topographic coordinates -- those apply to the chick RPC dataset."
     file_path: "data/20260620_chick_full.h5ad"
+    sha256: "62bd0d860c8e44c4e4b4947dc19c205ba158bbe0d7574ed042e6d4575c52679d"
+    wholemount_params:
+      stretch_bumps: [[180.0, 0.60, 50.0], [225.0, 0.85, 50.0], [45.0, 0.40, 50.0]]
     last_updated: "2026-06-20"
     author: "Cepko Lab (+ 1 public library reprocessed from GSE142244)"
     default_gene: "FGF8"
+    smooth_sigma: 1.5
     default_embedding: "X_umap.harmony"   # no DV/NT scores -> open on the Harmony UMAP
     # Categorical display: the default cell-type column, its biological (maturation)
     # order, and a fixed colour per type so EVERY view (UMAP scatter, violin, dot
@@ -124,18 +135,20 @@ datasets:
     title: "Human Retinal Progenitor Cells"
     description: "21,793 human (Homo sapiens) fetal retinal progenitor cells (PCW 7-11) with inferred 2D topographic coordinates. Reprocessed from publicly available datasets: GEO GSE138002 (Lu et al. 2020), GSE234963 (Dorgau et al. 2024), and GSE246169 (Wohlschlegel et al. 2023)."
     file_path: "data/20250604_human_RPC.h5ad"
+    sha256: "b9d0253f12f4a8d494c46f1d521c678de519dcdcef829a7a4a9612fb534dd6fd"
+    wholemount_params:
+      stretch_bumps: []
     last_updated: "2025-06-04"
     author: "Reprocessed public data: GSE138002 (Lu et al. 2020), GSE234963 (Dorgau et al. 2024), GSE246169 (Wohlschlegel et al. 2023)"
     default_gene: "FGF8"
     smooth_sigma: 2.0          # match chick/mouse RPC; 0.5 was a near-no-op (kernel stayed in the center bin)
-    min_cells_per_bin: 2
-    # Pseudobulk replicate unit for the ROI differential-expression volcano: 14 individual
-    # donor eyes / libraries (PCW7-11), complete (no missing values; `sample` has NaN for
+    min_cells_per_bin: 2      # lower cell density per bin
+    # Pseudobulk replicate unit for the ROI differential-expression volcano: 14 libraries (PCW7-11), complete (no missing values; `sample` has NaN for
     # one GEO batch). The object carries true raw counts, so pseudobulks are exact.
     replicate_columns: ["library"]
     # Manuscript area-DEG gates (human; the high-acuity region is the Fovea). See chick.
     figure_regions:
-      - {name: "Fovea — CYP26C1 (Fig S23)", n: 10, nt: [3, 4], dv: [4, 5]}
+      - {name: "Fovea — CYP26C1 (Fig S24)", n: 10, nt: [3, 4], dv: [4, 5]}
       - {name: "Ventral — VAX1",            n: 7,  nt: [0, 6], dv: [0, 2]}
       - {name: "Dorsal — ALDH1A1",          n: 7,  nt: [0, 6], dv: [4, 6]}
       - {name: "Nasal — FOXG1",             n: 7,  nt: [4, 6], dv: [0, 6]}
@@ -152,6 +165,9 @@ datasets:
     title: "Mouse Retinal Progenitor Cells"
     description: "26,505 mouse (Mus musculus) retinal progenitor cells (E13.5-E16) with inferred 2D topographic coordinates (dorsoventral DV.Score, nasotemporal NT.Score). Re-aligned with Cell Ranger 9.0.1 to the GRCm39-2024-A reference, integrated (Harmony) and subset to RPCs, from 7 publicly available 10x libraries across four GEO series: GSE118614 (Clark et al. 2019; E14, E16), GSE139904 (Balasubramanian et al. 2021; E13.5, control/wild-type cells only), GSE149040 (Wu et al. 2021; E13.5), and GSE122466 (Lo Giudice et al. 2019; E15.5)."
     file_path: "data/20260528_mouse_RPC_cr9_e13e16.h5ad"
+    sha256: "3fe08118d68a2b2bc0d2b0d5ded6ec93cd01b7e69e407058dd498a22aa23a2ef"
+    wholemount_params:
+      stretch_bumps: []
     last_updated: "2026-05-28"
     author: "Reprocessed public data (Cell Ranger 9.0.1 / GRCm39): GSE118614, GSE139904, GSE149040, GSE122466"
     default_gene: "Fgf8"
@@ -180,6 +196,9 @@ datasets:
     title: "Mouse Retinal Progenitor Cells (legacy)"
     description: "LEGACY / SUPERSEDED -- retained only for reproducibility of the originally shared version; use the current 'Mouse Retinal Progenitor Cells' dataset for analysis. 25,202 mouse (Mus musculus) retinal progenitor cells (E13-E16), the original four-library alignment to an older mouse genome reference, reprocessed from GEO GSE139904 and GSE118614. One contributing library (GSE139904) was a pool of wild-type and Fgfr1/2-mutant cells that was not restricted to controls, so this version mixed genotypes. It has been superseded by the de-contaminated CR9 re-alignment above (Cell Ranger 9.0.1 / GRCm39-2024-A), which restricts that library to control cells only."
     file_path: "data/20250604_mouse_RPC.h5ad"
+    sha256: "bc04f446cc5c5a0ddc4a0067b1547734427fc9f53bc74a3ee680b651c435a2a5"
+    wholemount_params:
+      stretch_bumps: []
     last_updated: "2025-06-04"
     author: "Superseded (older reference; includes mixed-genotype cells): GSE139904, GSE118614"
     default_gene: "Fgf8"

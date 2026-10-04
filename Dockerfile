@@ -48,5 +48,5 @@ EXPOSE 7860
 # 16 GB, datasets are multi-GB); --threads keeps the health check responsive while a
 # large .h5ad loads. Data is provisioned lazily/in-background (see app.py) so the port
 # binds immediately. `app:server` is the Flask WSGI app exposed by app.py.
-CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "1", "--threads", "4", \
-     "--timeout", "180", "--graceful-timeout", "30", "--access-logfile", "-", "app:server"]
+CMD exec gunicorn --bind "${HOST:-0.0.0.0}:${PORT:-7860}" --workers 1 --threads 4 \
+    --timeout 180 --graceful-timeout 30 --access-logfile - --error-logfile - app:server

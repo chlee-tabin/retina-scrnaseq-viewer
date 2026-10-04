@@ -1,4 +1,8 @@
 *.h5ad
+*.h5ad.sha256.json
+.pytest_cache/
+.test-tmp/
+.test-mpl-cache/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -34,4 +38,4 @@ env/
 Thumbs.db
 
 # Log files
-app_debug.log
+app_debug.log*

@@ -1,7 +1,8 @@
 """Pseudobulk differential expression for user-drawn ROIs.
 
 The interactive generalization of the manuscript area-DEG volcano
-(scripts/figures/fig6h_sfig23_area_deg.R in the analysis repo): instead of a fixed
+(scripts/figures/sfig24_area_deg.R and scripts/figures/supptables1_2_area_deg.R in
+https://github.com/chlee-tabin/retina-spatial-scrna-analysis): instead of a fixed
 DV/NT grid quadrant, the user lassos one or two regions of interest on the
 topographic map, and we run the SAME class of test the figure used.
 
@@ -58,7 +59,7 @@ class InsufficientReplicates(DEGError):
         super().__init__(f"{n_a} A / {n_b} B pseudobulks >= {min_cells} cells")
 
 
-def resolve_rois(idx_a, idx_b, n_obs):
+def resolve_rois(idx_a, idx_b, n_obs, valid_mask=None):
     """Disjoint per-cell side labels for two (possibly overlapping) ROIs.
 
     Returns (labels, info). `labels` is an object array of 'A' / 'B' / '' (unused).
@@ -71,6 +72,9 @@ def resolve_rois(idx_a, idx_b, n_obs):
         a[np.asarray(idx_a, dtype=int)] = True
     if idx_b:
         b[np.asarray(idx_b, dtype=int)] = True
+    valid = np.ones(n_obs, dtype=bool) if valid_mask is None else np.asarray(valid_mask, dtype=bool)
+    a &= valid
+    b &= valid
     na, nb = int(a.sum()), int(b.sum())
     labels = np.full(n_obs, '', dtype=object)
 
@@ -91,7 +95,7 @@ def resolve_rois(idx_a, idx_b, n_obs):
         # otherwise a B-only draw is reported as "ROI A".
         roi = a if na else b
         labels[roi] = 'A'
-        labels[~roi] = 'B'   # B == the rest
+        labels[valid & ~roi] = 'B'   # rest excludes cells without finite plot coordinates
         info = {'mode': 'A_vs_rest', 'n_overlap': 0, 'solo': 'A' if na else 'B'}
     else:
         info = {'mode': None, 'n_overlap': 0}
@@ -117,6 +121,47 @@ def polygon_to_indices(verts, xs, ys):
     path = Path(np.asarray(verts, dtype=float))
     pts = np.column_stack([np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)])
     return np.where(path.contains_points(pts))[0].tolist()
+
+
+def figure_region_rectangle(spec, xs, ys):
+    """Display outline of a half-open NT/DV bin-index gate."""
+    xs, ys = np.asarray(xs, float), np.asarray(ys, float)
+    xe = np.linspace(np.nanmin(xs[np.isfinite(xs)]), np.nanmax(xs[np.isfinite(xs)]), spec['n'] + 1)
+    ye = np.linspace(np.nanmin(ys[np.isfinite(ys)]), np.nanmax(ys[np.isfinite(ys)]), spec['n'] + 1)
+    x0, x1 = xe[spec['nt'][0]], xe[spec['nt'][1] + 1]
+    y0, y1 = ye[spec['dv'][0]], ye[spec['dv'][1] + 1]
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+
+def figure_region_indices(spec, xs, ys):
+    """Select directly on bin indices: lo <= index < hi+1; exclude the axis maximum."""
+    xs, ys = np.asarray(xs, float), np.asarray(ys, float)
+    finite = np.isfinite(xs) & np.isfinite(ys)
+    if not finite.any():
+        return []
+    n = spec['n']
+    xe = np.linspace(xs[np.isfinite(xs)].min(), xs[np.isfinite(xs)].max(), n + 1)
+    ye = np.linspace(ys[np.isfinite(ys)].min(), ys[np.isfinite(ys)].max(), n + 1)
+    ix = np.searchsorted(xe, xs, side='right') - 1
+    iy = np.searchsorted(ye, ys, side='right') - 1
+    selected = (finite & (ix >= spec['nt'][0]) & (ix < spec['nt'][1] + 1)
+                & (iy >= spec['dv'][0]) & (iy < spec['dv'][1] + 1))
+    return np.flatnonzero(selected).tolist()
+
+
+def roi_indices(verts, xs, ys, figure_regions=()):
+    """Preset rectangles use their bin gate, including after a rounded share-link restore.
+
+    A manually edited polygon ceases to match the preset and uses point-in-polygon.
+    The shape itself carries identity, so old links need no additional preset key.
+    """
+    points = coerce_roi({'A': verts})['A']
+    if len(points) == 4 and np.isfinite(xs).any() and np.isfinite(ys).any():
+        for spec in figure_regions:
+            rectangle = figure_region_rectangle(spec, xs, ys)
+            if np.array_equal(np.round(points, 4), np.round(rectangle, 4)):
+                return figure_region_indices(spec, xs, ys)
+    return polygon_to_indices(points, xs, ys)
 
 
 def replicate_labels(obs, replicate_columns):

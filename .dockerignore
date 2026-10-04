@@ -26,7 +26,10 @@ env/
 .env.local
 
 # Logs
-app_debug.log
+app_debug.log*
+.pytest_cache/
+.test-tmp/
+.test-mpl-cache/
 *.log
 
 # Editor / OS cruft

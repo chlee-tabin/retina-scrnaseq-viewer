@@ -1,7 +1,7 @@
 import plotly.express as px
 import pandas as pd
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from utils.smoothing import smooth_grid, DEFAULT_MIN_CELLS_PER_BIN
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.colors as pcolors
@@ -221,7 +221,7 @@ def create_scatter_plot(df, embedding, color_by, treat_as_categorical=False, sel
 
     return fig
 
-def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=1, color_floor=0.05, bin_stat='mean'):
+def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, treat_as_categorical=False, smooth_sigma=0, min_cells=DEFAULT_MIN_CELLS_PER_BIN, color_floor=0.05, bin_stat='mean', smoothing_mode='zero_fill'):
     """
     Create a binned visualization of cells
     
@@ -370,7 +370,7 @@ def create_binned_plot(df, embedding, color_by, bin_size=50, percentile=0.95, tr
             min_cells=min_cells,
             color_floor=color_floor,
             stat=bin_stat,
-        )
+            smoothing_mode=smoothing_mode)
         is_pct = (bin_stat == 'frac_pos')
         color_label = f"{color_by} (% detected)" if is_pct else color_by
 
@@ -442,8 +442,8 @@ def _color_min(values, maximum):
     return -float(maximum) if finite.size and finite.min() < 0 else 0.0
 
 
-def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_cells=1,
-                 color_floor=0.05, stat='mean'):
+def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_cells=DEFAULT_MIN_CELLS_PER_BIN,
+                 color_floor=0.05, stat='mean', smoothing_mode='zero_fill'):
     """Compute a per-bin statistic of a continuous value over a 2D (x, y) grid.
 
     This is the shared spatial-binning math used by both create_binned_plot's
@@ -500,9 +500,7 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
     # images): fill invalid bins with 0, smooth, then re-mask them to NaN so
     # empty regions stay grey instead of bleeding into the smoother.
     if smooth_sigma and smooth_sigma > 0:
-        filled = np.where(valid, H_mean, 0.0)
-        H_mean = gaussian_filter(filled, sigma=float(smooth_sigma))
-        H_mean[~valid] = np.nan
+        H_mean = smooth_grid(H_mean, valid, smooth_sigma, smoothing_mode)
 
     # Color scale from the NONZERO valid bins (matches the analysis pipeline,
     # which clips over expressing pixels rather than all bins). For 'frac_pos'
@@ -529,9 +527,9 @@ def _binned_mean(x, y, vals, bin_size=50, percentile=0.95, smooth_sigma=0, min_c
 
 
 def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
-                                    smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                    smooth_sigma=0, min_cells=DEFAULT_MIN_CELLS_PER_BIN, color_floor=0.05,
                                     bin_stat='mean', color_label='expression',
-                                    params=None, n_color_bins=24, nasal_gap=None):
+                                    params=None, n_color_bins=24, nasal_gap=None, smoothing_mode='zero_fill'):
     """Whole-mount ("flower") binned map, faithful to the reviewer figure.
 
     Unlike a histogram of the warped per-cell coordinates (which scatters isolated
@@ -565,7 +563,7 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
     traces, _ = _wholemount_binned_traces(
         dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
         min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
-        color_label=color_label, n_color_bins=n_color_bins)
+        color_label=color_label, n_color_bins=n_color_bins, smoothing_mode=smoothing_mode)
     if not traces:
         return _message_figure("No populated bins to project at this resolution.")
     fig = go.Figure()
@@ -591,9 +589,9 @@ def create_wholemount_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.9
 
 
 def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
-                              min_cells=1, color_floor=0.05, bin_stat='mean',
+                              min_cells=DEFAULT_MIN_CELLS_PER_BIN, color_floor=0.05, bin_stat='mean',
                               color_label='expression', n_color_bins=24, cmax=None,
-                              colorbar_x=None, showscale=True):
+                              colorbar_x=None, showscale=True, smoothing_mode='zero_fill'):
     """Build the (filled-quad level traces + colorbar carrier + hover) traces for ONE
     score-space binned FLOWER panel; return (traces, vmax). Shared by the single-gene flower
     and each panel of the dual-gene flower, so both render the SAME faithful score-space quad
@@ -603,7 +601,7 @@ def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, 
     # Per-bin statistic on the SCORE grid (x = NT, y = DV); H is [nt_bin, dv_bin], NaN below floor.
     H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
         nt, dv, vals, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
-        min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
+        min_cells=min_cells, color_floor=color_floor, stat=bin_stat, smoothing_mode=smoothing_mode)
     vmax = max(float(vmax), 1e-9)
     cap = float(cmax) if cmax is not None else vmax
     cmin = _color_min(H, cap)
@@ -664,9 +662,9 @@ def _wholemount_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, 
 
 
 def create_dual_gene_wholemount_figure(dv, nt, vals_list, names, *, bin_size=50, percentile=0.95,
-                                       smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                       smooth_sigma=0, min_cells=DEFAULT_MIN_CELLS_PER_BIN, color_floor=0.05,
                                        shared_scale=False, bin_stat='mean', params=None,
-                                       n_color_bins=24):
+                                       n_color_bins=24, smoothing_mode='zero_fill'):
     """Two genes side-by-side as faithful score-space binned FLOWERS (two xy panels), so the
     binned comparison matches the single-gene binned flower instead of histogramming warped
     coords (the source of the "looks like different parameters" mismatch). Independent colour
@@ -687,7 +685,7 @@ def create_dual_gene_wholemount_figure(dv, nt, vals_list, names, *, bin_size=50,
         ms = [vm for v in vals_list for _, vm in [_wholemount_binned_traces(
             dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
             min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label='',
-            n_color_bins=n_color_bins)]]
+            n_color_bins=n_color_bins, smoothing_mode=smoothing_mode)]]
         cmax_shared = max(ms) if ms else None
 
     fig = make_subplots(rows=1, cols=2, subplot_titles=[str(n) for n in names],
@@ -699,7 +697,7 @@ def create_dual_gene_wholemount_figure(dv, nt, vals_list, names, *, bin_size=50,
             dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
             min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
             color_label=_dual_colorbar_title(name, shared_scale, is_pct),
-            n_color_bins=n_color_bins, cmax=cmax_shared, colorbar_x=cbx[idx])
+            n_color_bins=n_color_bins, cmax=cmax_shared, colorbar_x=cbx[idx], smoothing_mode=smoothing_mode)
         if not traces:
             continue
         for t in traces:
@@ -867,7 +865,7 @@ def _nasal_edge_bins(dv, nt, P, *, layers, dorsal_deg, ventral_deg, bin_size, mi
 
 
 def _missing_nasal_overlay(dv, nt, params, *, frac, layers=2, dorsal_deg=45.0,
-                           ventral_deg=54.46, bin_size=50, min_cells=1):
+                           ventral_deg=54.46, bin_size=50, min_cells=DEFAULT_MIN_CELLS_PER_BIN):
     """Exploratory "(missing) uncaptured most-nasal cap" band for the SPHERE -- the 3D echo of
     the flat Fig R2.5 hatched missing-nasal tiles (flower_reproject.render_grid `ghost_polys`).
 
@@ -925,7 +923,7 @@ def _missing_nasal_overlay(dv, nt, params, *, frac, layers=2, dorsal_deg=45.0,
 
 
 def _missing_nasal_overlay_flat(dv, nt, params, *, frac, layers=2, dorsal_deg=45.0,
-                                ventral_deg=54.46, bin_size=50, min_cells=1):
+                                ventral_deg=54.46, bin_size=50, min_cells=DEFAULT_MIN_CELLS_PER_BIN):
     """The flat-flower (2D) twin of _missing_nasal_overlay: the hatched "missing/uncaptured"
     most-nasal tiles of Fig R2.5 (flower_reproject `ghost_polys`), now controllable in the
     viewer's flower view. Same edge+wedge selection (_nasal_edge_bins), but each nasal-edge
@@ -1011,8 +1009,8 @@ def create_sphere_figure(x, y, z, color_series, color_by, gene=None,
 
 
 def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smooth_sigma=0,
-                          min_cells=1, color_floor=0.05, bin_stat='mean',
-                          color_label='expression', cmax=None, colorbar_x=None, showscale=True):
+                          min_cells=DEFAULT_MIN_CELLS_PER_BIN, color_floor=0.05, bin_stat='mean',
+                          color_label='expression', cmax=None, colorbar_x=None, showscale=True, smoothing_mode='zero_fill'):
     """Build the (Mesh3d + invisible hover) traces for ONE binned-sphere panel; return
     (traces, vmax). Shared by the single-gene binned sphere and each panel of the dual-gene
     sphere. `dv`/`nt`/`vals` must already be finite-filtered and `P` already carry a scale
@@ -1021,7 +1019,7 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
     # Per-bin statistic on the SCORE grid (x = NT, y = DV); H is [nt_bin, dv_bin], NaN below floor.
     H, H_counts, nt_edges, dv_edges, vmax = _binned_mean(
         nt, dv, vals, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
-        min_cells=min_cells, color_floor=color_floor, stat=bin_stat)
+        min_cells=min_cells, color_floor=color_floor, stat=bin_stat, smoothing_mode=smoothing_mode)
     vmax = max(float(vmax), 1e-9)
     cap = float(cmax) if cmax is not None else vmax
     cmin = _color_min(H, cap)
@@ -1070,9 +1068,9 @@ def _sphere_binned_traces(dv, nt, vals, P, *, bin_size=50, percentile=0.95, smoo
 
 
 def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
-                                smooth_sigma=0, min_cells=1, color_floor=0.05,
+                                smooth_sigma=0, min_cells=DEFAULT_MIN_CELLS_PER_BIN, color_floor=0.05,
                                 bin_stat='mean', color_label='expression', params=None,
-                                haa_xyz=None, haa_marker=None, haa_mode=None, nasal_gap=None):
+                                haa_xyz=None, haa_marker=None, haa_mode=None, nasal_gap=None, smoothing_mode='zero_fill'):
     """Binned whole-mount SPHERE: the score-space binned map painted onto the unit sphere.
 
     Identical score-grid binning to create_wholemount_binned_figure, but the grid VERTICES
@@ -1095,7 +1093,7 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
 
     traces, _ = _sphere_binned_traces(
         dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
-        min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label=color_label)
+        min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label=color_label, smoothing_mode=smoothing_mode)
     if not traces:
         return _message_figure("No populated bins to project at this resolution.")
 
@@ -1118,9 +1116,9 @@ def create_sphere_binned_figure(dv, nt, vals, *, bin_size=50, percentile=0.95,
 
 
 def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bin_size=50,
-                                   percentile=0.95, smooth_sigma=0, min_cells=1,
+                                   percentile=0.95, smooth_sigma=0, min_cells=DEFAULT_MIN_CELLS_PER_BIN,
                                    color_floor=0.05, shared_scale=False, bin_stat='mean',
-                                   params=None, haa_xyz=None, haa_marker=None, haa_mode=None):
+                                   params=None, haa_xyz=None, haa_marker=None, haa_mode=None, smoothing_mode='zero_fill'):
     """Two genes side-by-side on the sphere: two 3D scenes, each the same points/binned
     sphere as the single-gene views (reusing _reference_globe / _orientation_labels /
     _sphere_binned_traces). Each gene gets its OWN colour scale by default so a weak gene is
@@ -1144,7 +1142,7 @@ def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bi
         if binned:
             ms = [vm for v in vals_list for _, vm in [_sphere_binned_traces(
                 dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
-                min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label='')]]
+                min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat, color_label='', smoothing_mode=smoothing_mode)]]
             cmax_shared = max(ms) if ms else None
         else:
             ms = [float(np.nanmax(v)) if v.size and np.isfinite(v).any() else 0.0 for v in vals_list]
@@ -1163,7 +1161,7 @@ def create_dual_gene_sphere_figure(dv, nt, vals_list, names, *, binned=False, bi
                 dv, nt, v, P, bin_size=bin_size, percentile=percentile, smooth_sigma=smooth_sigma,
                 min_cells=min_cells, color_floor=color_floor, bin_stat=bin_stat,
                 color_label=_dual_colorbar_title(name, shared_scale, is_pct),
-                cmax=cmax_shared, colorbar_x=cbx[idx])
+                cmax=cmax_shared, colorbar_x=cbx[idx], smoothing_mode=smoothing_mode)
             for t in traces:
                 fig.add_trace(t, row=1, col=col)
         else:
@@ -1360,8 +1358,8 @@ def _dual_colorbar_title(name, shared_scale, is_pct):
 
 def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
                             bin_size=50, percentile=0.95, smooth_sigma=0,
-                            min_cells=1, color_floor=0.05, shared_scale=False,
-                            bin_stat='mean'):
+                            min_cells=DEFAULT_MIN_CELLS_PER_BIN, color_floor=0.05, shared_scale=False,
+                            bin_stat='mean', smoothing_mode='zero_fill'):
     """Two genes side-by-side over the same embedding for visual comparison.
 
     Each panel shows one gene's expression. When `binned` (custom spatial
@@ -1413,7 +1411,7 @@ def create_dual_gene_figure(x, y, vals_list, names, embedding, binned=False,
                 bin_size=bin_size, percentile=percentile,
                 smooth_sigma=smooth_sigma, min_cells=min_cells,
                 color_floor=color_floor, stat=bin_stat,
-            )
+                smoothing_mode=smoothing_mode)
             grids.append((H_mean, xedges, yedges))
             vmaxes.append(vmax)
         shared_vmax = max(vmaxes) if vmaxes else float(color_floor)
@@ -1512,7 +1510,7 @@ def create_group_expression_figure(
     reconstruction does not apply, so Panel A becomes the simple per-(group x replicate)
     MEAN of the variable and Panel B an all-cell violin.
 
-    Plotly reproduction of scripts/viewer_full_chick/16b_npy_figure.R.
+    Plotly reproduction of the manuscript Methods (group-expression figure).
 
     Parameters
     ----------

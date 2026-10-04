@@ -2,12 +2,13 @@
 
 The user draws one or two polygon ROIs directly on the spatial map (assets/roi_draw.js
 captures clicks -> data coords, double-click closes, mirrors vertices into
-roi-vertices-store). "Run" selects cells by point-in-polygon on the embedding's axes and
+roi-vertices-store). "Run" selects drawn ROIs by point-in-polygon, or recognises a
+figure-preset rectangle and applies its half-open bin-index gate, then
 runs a negative-binomial pseudobulk DE (pydeseq2) over the dataset's configured replicate
 columns (chick: library × genotype; human/mouse: library). Results
 drive the volcano, a sortable table, a resolved-selection recap, and a CSV download.
 
-Selection is point-in-polygon in score space, NOT Plotly point selection -- so the ROI
+Selection is in score space, NOT Plotly point selection -- so the ROI
 works the same on the per-cell scatter, the binned heatmap, or the smoothed map.
 """
 import hashlib
@@ -24,16 +25,16 @@ import dash_bootstrap_components as dbc
 
 from utils.data_loading import (load_dataset_state, get_dataset_config, dataset_column_types,
                                 store_dataset_id)
-from utils.validation import coerce_control, coerce_roi
+from utils.validation import coerce_control, coerce_roi, is_categorical_series
 from utils.plotting import _message_figure
 from utils.deg import (
-    resolve_rois, polygon_to_indices, deg_from_labels,
+    resolve_rois, roi_indices, figure_region_rectangle, deg_from_labels,
     DEGError, NoReplicate, InsufficientReplicates,
 )
 from utils.deg_plots import create_volcano_figure, create_recap_figure
 # Reused so the run gate matches the main plot's own categorical decision (no circular import:
 # main_callbacks imports nothing from callbacks/).
-from callbacks.main_callbacks import _is_categorical_series, _on
+from callbacks.main_callbacks import _on
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ def invalidate_stale_results(verts, data_store, min_cells, custom_x, custom_y,
 # (its axes are category-local). Entering that state after a valid run would leave a result the
 # current map can't support. Colour/binning are otherwise display-only (deliberately out of the
 # signature), so clear ONLY when the new state is the unsupported one -- a benign recolour keeps
-# the result. column_types mirrors _is_categorical_series (app.py), so no adata load is needed.
+# the result. column_types mirrors is_categorical_series (app.py), so no adata load is needed.
 @callback(
     [Output('deg-results-store', 'data', allow_duplicate=True),
      Output('deg-status', 'children', allow_duplicate=True),
@@ -186,7 +187,7 @@ def populate_roi_presets(data_store):
 def load_preset_region(region_name, data_store):
     """Set ROI A to the rectangle of a manuscript area-DEG gate. The gate is an axis-aligned
     range in NT.Score × DV.Score fractions of the data's score range (matches the figure's
-    `gate()` in area_significant_deg.R); reproduces a Fig 6H/S23 panel after Run. Also switches
+    manuscript Methods); reproduces a Fig 6H/S24 panel after Run. Also switches
     the map to the raw DV/NT view it is defined in -- custom embedding, raw projection, axes
     pinned to NT.Score (x) / DV.Score (y) -- so the gate is drawn and run_deg_cb tests it in the
     right space (otherwise loading a preset on UMAP/flower/sphere can't reproduce the volcano).
@@ -209,13 +210,9 @@ def load_preset_region(region_name, data_store):
         return clear
     nt = pd.to_numeric(adata.obs['NT.Score'], errors='coerce')
     dv = pd.to_numeric(adata.obs['DV.Score'], errors='coerce')
-    nlo, nhi, dlo, dhi = float(nt.min()), float(nt.max()), float(dv.min()), float(dv.max())
-    n, ni, di = spec['n'], spec['nt'], spec['dv']
-    x0 = nlo + (nhi - nlo) * ni[0] / n
-    x1 = nlo + (nhi - nlo) * (ni[1] + 1) / n
-    y0 = dlo + (dhi - dlo) * di[0] / n
-    y1 = dlo + (dhi - dlo) * (di[1] + 1) / n
-    rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    if not np.isfinite(nt).any() or not np.isfinite(dv).any():
+        return clear
+    rect = figure_region_rectangle(spec, nt, dv)
     # ROI A = the gate; exit draw mode; show + test it on the raw DV/NT map (custom embedding,
     # raw projection, NT.Score x / DV.Score y).
     return {'A': rect, 'B': []}, None, 'NT.Score', 'DV.Score', 'custom_embedding', 'raw'
@@ -296,7 +293,7 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         # global DV/NT scores this DE applies to all cells. Reject it (same categorical test the
         # main plot uses) rather than silently contrast the wrong region.
         if (_on(enable_binning) and color_by and color_by != 'gene_expression'
-                and color_by in adata.obs.columns and _is_categorical_series(adata.obs[color_by])):
+                and color_by in adata.obs.columns and is_categorical_series(adata.obs[color_by])):
             return None, _message_figure(""), dbc.Alert(
                 "ROI DE isn't available on a category-faceted binned map — each category panel "
                 "has its own axes. Colour by a gene or a continuous score, or turn off binning, "
@@ -305,9 +302,12 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         xs = pd.to_numeric(adata.obs[custom_x], errors='coerce').to_numpy()
         ys = pd.to_numeric(adata.obs[custom_y], errors='coerce').to_numpy()
         verts = coerce_roi(verts)
-        idx_a = polygon_to_indices(verts.get('A'), xs, ys)
-        idx_b = polygon_to_indices(verts.get('B'), xs, ys)
-        labels, sel_info = resolve_rois(idx_a, idx_b, adata.n_obs)
+        regions = (data_store.get('figure_regions') or []
+                   if custom_x == 'NT.Score' and custom_y == 'DV.Score' else [])
+        idx_a = roi_indices(verts.get('A'), xs, ys, regions)
+        idx_b = roi_indices(verts.get('B'), xs, ys, regions)
+        labels, sel_info = resolve_rois(idx_a, idx_b, adata.n_obs,
+                                       valid_mask=np.isfinite(xs) & np.isfinite(ys))
         if sel_info['mode'] is None:
             return None, _message_figure(
                 "Draw at least one ROI polygon (≥ 3 vertices) on the map."), ""
@@ -345,7 +345,7 @@ def run_deg_cb(n_clicks, verts, data_store, min_cells, custom_x, custom_y,
         records = res.astype(object).where(pd.notnull(res), None).to_dict('records')
         sig = _run_signature(verts, data_store, min_cells, custom_x, custom_y, embedding,
                              projection, color_by, enable_binning)
-        return ({'records': records, 'sig': sig, 'solo': info.get('solo', 'A')},
+        return ({'records': records, 'sig': sig, 'solo': info.get('solo', 'A'), 'mode': info['mode']},
                 recap, _status(info, min_cells))
     except Exception as e:
         logger.error(f"run_deg_cb failed: {e}", exc_info=True)
@@ -407,7 +407,8 @@ def render_results(stored, lfc_thresh, padj_thresh, verts, data_store, min_cells
     lfc_t = coerce_control('volcano_lfc', lfc_thresh)
     padj_t = coerce_control('volcano_padj', padj_thresh)
     fig = create_volcano_figure(res, lfc_thresh=lfc_t, padj_thresh=padj_t,
-                                foreground_label=stored.get('solo', 'A'))
+                                foreground_label=stored.get('solo', 'A'),
+                                mode=stored.get('mode', 'A_vs_B'))
 
     # Keep the table values NUMERIC so DataTable's native sort orders numerically rather than
     # lexicographically; show ~3 significant figures via the column format instead of pre-

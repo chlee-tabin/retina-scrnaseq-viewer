@@ -1,8 +1,12 @@
 """Geometry self-check for the exploratory uncaptured-nasal sphere overlay
 (plotting._missing_nasal_overlay). Synthetic cells only -- no data file needed.
 
-Run: ~/repos/_retina_viewer_venv/bin/python test_nasal_overlay.py
+Run: python tests/test_nasal_overlay.py
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import numpy as np
 
 from utils import wholemount as wm
@@ -26,24 +30,24 @@ def _rho_az(x, y, z):
 
 def test_off_switch():
     dv, nt = _disc_cells()
-    assert _missing_nasal_overlay(dv, nt, None, frac=0.0) == []          # frac 0 -> nothing
-    assert _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=0) == []   # 0 layers -> off
-    assert _missing_nasal_overlay(np.array([]), np.array([]), None, frac=0.13) == []
+    assert _missing_nasal_overlay(dv, nt, None, frac=0.0, min_cells=1) == []          # frac 0 -> nothing
+    assert _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=0, min_cells=1) == []   # 0 layers -> off
+    assert _missing_nasal_overlay(np.array([]), np.array([]), None, frac=0.13, min_cells=1) == []
 
 
 def test_wedge_shrinks_with_reach():
     # Narrowing the dorsal+ventral reach must keep strictly fewer band tiles (shrink to a
     # sub-arc of the nasal rim) -- the "shrink to certain locations" control.
     dv, nt = _disc_cells()
-    wide = _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, dorsal_deg=45, ventral_deg=55)
-    narrow = _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, dorsal_deg=15, ventral_deg=15)
+    wide = _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, dorsal_deg=45, ventral_deg=55, min_cells=1)
+    narrow = _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, dorsal_deg=15, ventral_deg=15, min_cells=1)
     assert wide and narrow, "both wedges should still draw something"
     assert len(np.asarray(narrow[0].x)) < len(np.asarray(wide[0].x)), "narrow wedge should have fewer verts"
 
 
 def test_band_geometry():
     dv, nt = _disc_cells()
-    traces = _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, bin_size=40)
+    traces = _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, bin_size=40, min_cells=1)
     assert len(traces) == 2, "expect a Mesh3d band + a line outline"
     mesh = traces[0]
     vx, vy, vz = (np.asarray(a, float) for a in (mesh.x, mesh.y, mesh.z))
@@ -76,14 +80,14 @@ def test_flat_overlay():
     # The flat-flower twin: one hatched fill trace, tiles nasal (+x in display) and extruded
     # beyond the captured cap's nasal extent; layers=0 / temporal-only -> nothing.
     dv, nt = _disc_cells()
-    traces = _missing_nasal_overlay_flat(dv, nt, None, frac=0.13, layers=2, bin_size=40)
+    traces = _missing_nasal_overlay_flat(dv, nt, None, frac=0.13, layers=2, bin_size=40, min_cells=1)
     assert len(traces) == 1 and traces[0].fill == 'toself', "expect one hatched fill trace"
     tx = np.array([v for v in traces[0].x if v is not None], float)
     assert tx.size and tx.mean() > 0, "flat tiles should be nasal (+x)"
     cx, _ = wm.wholemount_coords(dv, nt)
     assert np.nanmax(tx) > np.nanmax(cx[np.isfinite(cx)]), "tiles should extrude past the cap rim"
-    assert _missing_nasal_overlay_flat(dv, nt, None, frac=0.13, layers=0) == []
-    assert _missing_nasal_overlay_flat(*_disc_cells(nt_shift=-0.8), None, frac=0.13, layers=2, bin_size=40) == []
+    assert _missing_nasal_overlay_flat(dv, nt, None, frac=0.13, layers=0, min_cells=1) == []
+    assert _missing_nasal_overlay_flat(*_disc_cells(nt_shift=-0.8), None, frac=0.13, layers=2, bin_size=40, min_cells=1) == []
 
 
 def test_marker_footprint_center():
@@ -124,7 +128,7 @@ def test_haa_center_modes():
 def test_temporal_only_has_no_band():
     # Cells pushed temporally (NT negative) -> no populated bin in the nasal wedge -> no band.
     dv, nt = _disc_cells(nt_shift=-0.8)
-    assert _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, bin_size=40) == []
+    assert _missing_nasal_overlay(dv, nt, None, frac=0.13, layers=2, bin_size=40, min_cells=1) == []
 
 
 if __name__ == "__main__":

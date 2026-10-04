@@ -1,5 +1,5 @@
-from dash import Input, Output, State, callback, clientside_callback
-from utils.data_loading import load_dataset_state, get_dataset_config, store_dataset_id, gene_search_options
+from dash import Input, Output, State, callback, clientside_callback, ctx
+from utils.data_loading import load_dataset_state, get_dataset_config, store_dataset_id, gene_search_options, match_gene
 from utils.plotting import (
     create_scatter_plot,
     create_binned_plot,
@@ -18,9 +18,9 @@ from utils.plotting import (
 import pandas as pd
 import logging
 from utils.error_handling import handle_callback_error, log_callback_info
-from utils.state import state_for_dataset
+from utils.state import state_for_dataset, restore_state, restore_output
 from utils.validation import coerce_control, coerce_camera, category_allowed, is_categorical_series
-from utils.smoothing import _coerce_sigma
+from utils.smoothing import _coerce_sigma, DEFAULT_MIN_CELLS_PER_BIN
 from utils.deg import replicate_labels
 from utils import wholemount
 import scipy.sparse
@@ -31,14 +31,20 @@ logger = logging.getLogger(__name__)
 
 
 def _gene_vector(adata, gene):
-    """Return a dense 1D expression vector for `gene` (handles sparse X)."""
-    sub = adata[:, gene].X
+    """Return a dense 1D expression vector for `gene` (handles sparse X).
+
+    Index the column of .X directly: ``adata[:, gene]`` builds an AnnData view whose
+    ``.raw`` row-subset copies the ENTIRE raw matrix (~0.9 GB for chick RPC) on every
+    call, which inflated the server footprint by GBs per page load.
+    """
+    sub = adata.X[:, adata.var_names.get_loc(gene)]
     if scipy.sparse.issparse(sub):
         return sub.toarray().flatten()
     return np.asarray(sub).flatten()
 
 
-def _haa_center(adata, dv, nt, marker, mode, *, bin_size=50, min_cells=5, smooth_sigma=0.0):
+def _haa_center(adata, dv, nt, marker, mode, *, bin_size=50,
+                min_cells=DEFAULT_MIN_CELLS_PER_BIN, smooth_sigma=0.0, smoothing_mode='zero_fill'):
     """(dv, nt) HAA centre for the dataset's marker (chick: CYP26C1) by the chosen `mode`
     (wholemount.haa_center: footprint / expression / domain / peak). The marker is sparse and
     ring-ish, so 'the centre' depends on the definition -- the HAA-mode control exposes them.
@@ -51,7 +57,8 @@ def _haa_center(adata, dv, nt, marker, mode, *, bin_size=50, min_cells=5, smooth
     if int(np.count_nonzero(expr > 0)) < 5:
         return None
     return wholemount.haa_center(dv, nt, expr, mode, bin_size=bin_size,
-                                 min_cells=min_cells, smooth_sigma=smooth_sigma)
+                                 min_cells=min_cells, smooth_sigma=smooth_sigma,
+                                 smoothing_mode=smoothing_mode)
 
 
 # Persist the user's 3D-sphere rotation across re-renders. dcc.Graph's uirevision does NOT
@@ -169,11 +176,6 @@ def _annotation_style(data_store, column):
     return None, None
 
 
-def _is_categorical_series(series):
-    """Heuristic used across the viewer: category/object dtype or small-int."""
-    return is_categorical_series(series)
-
-
 def _group_fields(adata, settings):
     """The same capped group/replicate choices at restore and computation time.
 
@@ -198,11 +200,12 @@ def _group_fields(adata, settings):
 
 def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
                        symmetric=None, dewarp=None, pow_p=None,
-                       gap_mode=None, gap_frac=None, pole=None):
-    """Merge the Advanced-projection control values over the shipped reviewer preset
-    (wholemount.LOCKED_PARAMS) into a params dict for flower_transform. None values keep
-    the preset, so the defaults reproduce Fig R2.5 exactly."""
-    P = dict(wholemount.LOCKED_PARAMS)
+                       gap_mode=None, gap_frac=None, pole=None, dataset=None):
+    """Merge projection controls over the current dataset's configured defaults.
+
+    Without dataset context, preserve the historical tuned chick preset.
+    """
+    P = wholemount.dataset_params(dataset or {'dataset_id': 'chick_rpc'})
     if rho_nt is not None:
         P['rho_max_nt_deg'] = coerce_control('wm_rho_nt', rho_nt)
     if rho_dv is not None:
@@ -214,11 +217,12 @@ def _wholemount_params(rho_nt, rho_dv, gap_gain, stretch_scale, n_cuts,
     if stretch_scale is not None:
         s = coerce_control('wm_stretch', stretch_scale)
         P['stretch_bumps'] = tuple((ang, amp * s, wid)
-                                   for (ang, amp, wid) in wholemount.LOCKED_PARAMS['stretch_bumps'])
+                                   for (ang, amp, wid) in P['stretch_bumps'])
     # Evenly spaced relief cuts; 0 -> a solid disk (no slits).
     if n_cuts is not None:
         k = coerce_control('wm_cuts', n_cuts)
-        P['cut_angles_deg'] = tuple(i * 360.0 / k for i in range(k)) if k > 0 else ()
+        if k != len(P['cut_angles_deg']):
+            P['cut_angles_deg'] = tuple(i * 360.0 / k for i in range(k)) if k > 0 else ()
     # Knobs not pinned by LOCKED_PARAMS (they inherit DEFAULT_PARAMS): exposed so the user
     # can explore them. Each stays at the R2.5 value unless its control overrides it.
     if symmetric is not None:
@@ -304,7 +308,8 @@ def _nasal_gap_params(cfg, layers, frac, dorsal, ventral):
      Input('haa-mode', 'value'),
      # Gaussian-smoothing strength (sigma). Per-dataset default set by update_data;
      # gated to 0 when the enable-smoothing toggle is off.
-     Input('smooth-sigma-slider', 'value')],
+     Input('smooth-sigma-slider', 'value'),
+     Input('smoothing-mode', 'value')],
     State('sphere-camera-store', 'data'),
     prevent_initial_call=True
 )
@@ -319,7 +324,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 group_value_source, group_meta,
                 wm_symmetric, wm_dewarp, wm_pow, wm_gap_mode, wm_gap_frac, wm_pole,
                 ng_layers, ng_frac, ng_dorsal, ng_ventral, haa_mode,
-                smooth_sigma_ctrl,
+                smooth_sigma_ctrl, smoothing_mode,
                 sphere_cam):
     logger.debug("update_plot called with parameters:")
 
@@ -336,7 +341,12 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         bin_number = coerce_control('bins', bin_number)
         percentile = coerce_control('percentile', percentile)
         smooth_sigma_ctrl = _coerce_sigma(smooth_sigma_ctrl, data_store.get('smooth_sigma', 1.5))
-        if color_by != 'gene_expression' and color_by not in data_store['column_types']:
+        smoothing_mode = 'mask_normalised' if smoothing_mode == 'mask_normalised' else 'zero_fill'
+        gene = match_gene(gene, adata.var_names) or gene
+        gene2 = match_gene(gene2, adata.var_names) or gene2
+        group_gene = match_gene(group_gene, adata.var_names) or group_gene
+        valid_color_values = {'gene_expression', *(data_store.get('column_types') or {})}
+        if color_by not in valid_color_values:
             color_by = 'gene_expression'
 
         # ---- Expression-by-group view (violin/box/strip/dotplot) ----
@@ -477,6 +487,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     symmetric=_on(wm_symmetric), dewarp=wm_dewarp, pow_p=wm_pow,
                     gap_mode=wm_gap_mode, gap_frac=wm_gap_frac,
                     pole=('median' if wm_pole == 'median' else 'origin'),
+                    dataset=data_store,
                 )
                 # Fit the pole + per-axis scale ONCE from the cells and reuse it for every
                 # warp (scatter cells AND the binned grid), so the views share one basis
@@ -496,8 +507,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     x, y = sphere_xyz[0], sphere_xyz[1]
                     hc = _haa_center(adata, dv_cells, nt_cells, data_store.get('haa_marker'),
                                      haa_mode, bin_size=bin_number,
-                                     min_cells=data_store.get('min_cells_per_bin', 5),
-                                     smooth_sigma=haa_smooth)
+                                     min_cells=data_store.get('min_cells_per_bin', DEFAULT_MIN_CELLS_PER_BIN),
+                                     smooth_sigma=haa_smooth, smoothing_mode=smoothing_mode)
                     if hc is not None:
                         hx, hy, hz = wholemount.sphere_coords(np.array([hc[0]]), np.array([hc[1]]),
                                                               params=proj_params)
@@ -543,7 +554,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
             smooth_on = _on(enable_smoothing)
             smooth_sigma = float(smooth_sigma_ctrl or 0) if smooth_on else 0
             v1, v2 = _gene_vector(adata, gene), _gene_vector(adata, gene2)
-            mc = data_store.get('min_cells_per_bin', 1)
+            mc = data_store.get('min_cells_per_bin', DEFAULT_MIN_CELLS_PER_BIN)
             cf = data_store.get('color_floor', 0.05)
             shared = _on(compare_shared_scale)
             if sphere_xyz is not None:
@@ -554,7 +565,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     smooth_sigma=smooth_sigma, min_cells=mc, color_floor=cf,
                     shared_scale=shared, bin_stat=(bin_stat or 'mean'), params=proj_params,
                     haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
-                ), sphere_cam)
+                    smoothing_mode=smoothing_mode), sphere_cam)
             if custom_projection == 'flower' and binning_on:
                 # Faithful score-space binned flower per panel (matches the single-gene
                 # binned flower), instead of histogramming the warped per-cell coordinates.
@@ -563,7 +574,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     bin_size=bin_number, percentile=percentile, smooth_sigma=smooth_sigma,
                     min_cells=mc, color_floor=cf, shared_scale=shared,
                     bin_stat=(bin_stat or 'mean'), params=proj_params,
-                )
+                    smoothing_mode=smoothing_mode)
             return create_dual_gene_figure(
                 np.asarray(x), np.asarray(y), [v1, v2], [gene, gene2],
                 embedding_label,
@@ -575,7 +586,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 color_floor=cf,
                 bin_stat=(bin_stat or 'mean'),
                 shared_scale=shared,
-            )
+                smoothing_mode=smoothing_mode)
 
         # Handle gene expression
         if color_by == 'gene_expression':
@@ -600,7 +611,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
             color_series = adata.obs[color_by] if color_by else None
             if color_series is not None:
                 logger.debug(f"Color series dtype: {color_series.dtype}")
-                treat_as_categorical = _is_categorical_series(color_series)
+                treat_as_categorical = is_categorical_series(color_series)
             logger.debug(f"treat_as_categorical: {treat_as_categorical}")
 
         # ---- 3D spherical whole-mount: the topographic map on its native geometry ----
@@ -617,12 +628,12 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 return _apply_sphere_camera(create_sphere_binned_figure(
                     dv_cells, nt_cells, np.asarray(color_series, dtype=float),
                     bin_size=bin_number, percentile=percentile, smooth_sigma=smooth_sigma,
-                    min_cells=data_store.get('min_cells_per_bin', 1),
+                    min_cells=data_store.get('min_cells_per_bin', DEFAULT_MIN_CELLS_PER_BIN),
                     color_floor=data_store.get('color_floor', 0.05),
                     bin_stat=(bin_stat or 'mean'), color_label=cl, params=proj_params,
                     haa_xyz=haa_xyz, haa_marker=data_store.get('haa_marker'), haa_mode=haa_mode,
                     nasal_gap=nasal_gap_eff,
-                ), sphere_cam)
+                    smoothing_mode=smoothing_mode), sphere_cam)
             s_cmap, s_corder = _annotation_style(data_store, color_by)
             return _apply_sphere_camera(create_sphere_figure(
                 sphere_xyz[0], sphere_xyz[1], sphere_xyz[2],
@@ -646,7 +657,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
         if binning_on:
             smooth_on = _on(enable_smoothing)
             smooth_sigma = float(smooth_sigma_ctrl or 0) if smooth_on else 0
-            min_cells = data_store.get('min_cells_per_bin', 1)
+            min_cells = data_store.get('min_cells_per_bin', DEFAULT_MIN_CELLS_PER_BIN)
             if custom_projection == 'flower' and not treat_as_categorical and color_series is not None:
                 # Faithful whole-mount: bin in DV/NT SCORE space, warp, drop strays --
                 # instead of histogramming the warped per-cell coordinates.
@@ -665,7 +676,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     color_label=cl,
                     params=proj_params,
                     nasal_gap=nasal_gap_eff,
-                )
+                    smoothing_mode=smoothing_mode)
             else:
                 fig = create_binned_plot(
                     df, embedding_label, color_by,
@@ -676,7 +687,7 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                     min_cells=min_cells,
                     color_floor=data_store.get('color_floor', 0.05),
                     bin_stat=(bin_stat or 'mean'),
-                )
+                    smoothing_mode=smoothing_mode)
         else:
             s_cmap, s_corder = _annotation_style(data_store, color_by)
             fig = create_scatter_plot(
@@ -695,8 +706,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
                 and wholemount.has_scores(adata.obs.columns)):
             hc = _haa_center(adata, adata.obs[wholemount.DV_COL].to_numpy(),
                              adata.obs[wholemount.NT_COL].to_numpy(), haa_marker, haa_mode,
-                             bin_size=bin_number, min_cells=data_store.get('min_cells_per_bin', 5),
-                             smooth_sigma=haa_smooth)
+                             bin_size=bin_number, min_cells=data_store.get('min_cells_per_bin', DEFAULT_MIN_CELLS_PER_BIN),
+                             smooth_sigma=haa_smooth, smoothing_mode=smoothing_mode)
             if hc is not None:
                 hdv, hnt = hc
                 if custom_projection == 'flower':
@@ -718,8 +729,8 @@ def update_plot(data_store, embedding, custom_x, custom_y, color_by, gene, viz_m
      Output('custom-y-select', 'options'),
      # value outputs allow_duplicate: the ROI figure-region preset (deg_callbacks) also
      # pins these to NT.Score / DV.Score so the gate is shown + tested in its own space.
-     Output('custom-x-select', 'value', allow_duplicate=True),
-     Output('custom-y-select', 'value', allow_duplicate=True),
+     restore_output('custom_x'),
+     restore_output('custom_y'),
      Output('custom-embedding-container', 'style')],
     [Input('data-store', 'data'),
      Input('embedding-select', 'value'),
@@ -750,8 +761,9 @@ def update_custom_embedding_controls(data_store, embedding, url_search):
         # dataset (a stale ?state= from another dataset must not re-apply on a switch).
         state = state_for_dataset(url_search, data_store.get('dataset_id'))
         if state and state.get('embedding') == 'custom_embedding':
-            custom_x = state.get('custom_x')
-            custom_y = state.get('custom_y')
+            restored = restore_state(state, data_store)
+            custom_x = restored['custom_x']
+            custom_y = restored['custom_y']
             # Only set values if they exist in the options
             valid_values = [opt['value'] for opt in options]
             if custom_x in valid_values and custom_y in valid_values:
@@ -813,31 +825,24 @@ def toggle_wholemount_advanced(custom_projection):
     return {'display': 'none'}
 
 
+PROJECTION_KEYS = ('wm_rho_nt', 'wm_rho_dv', 'wm_gap', 'wm_stretch', 'wm_cuts',
+                   'wm_symmetric', 'wm_pole', 'wm_dewarp', 'wm_pow', 'wm_gap_mode',
+                   'wm_gap_frac', 'ng_layers', 'ng_frac', 'ng_dorsal', 'ng_ventral')
+
+
 @callback(
-    [Output('wm-rho-nt', 'value', allow_duplicate=True),
-     Output('wm-rho-dv', 'value', allow_duplicate=True),
-     Output('wm-gap', 'value', allow_duplicate=True),
-     Output('wm-stretch', 'value', allow_duplicate=True),
-     Output('wm-cuts', 'value', allow_duplicate=True),
-     Output('wm-symmetric', 'value', allow_duplicate=True),
-     Output('wm-pole', 'value', allow_duplicate=True),
-     Output('wm-dewarp', 'value', allow_duplicate=True),
-     Output('wm-pow', 'value', allow_duplicate=True),
-     Output('wm-gap-mode', 'value', allow_duplicate=True),
-     Output('wm-gap-frac', 'value', allow_duplicate=True),
-     Output('nasal-gap-layers', 'value', allow_duplicate=True),
-     Output('nasal-gap-frac', 'value', allow_duplicate=True),
-     Output('nasal-gap-dorsal', 'value', allow_duplicate=True),
-     Output('nasal-gap-ventral', 'value', allow_duplicate=True)],
-    Input('wm-reset', 'n_clicks'),
+    [restore_output(key) for key in PROJECTION_KEYS],
+    [Input('wm-reset', 'n_clicks'), Input('data-store', 'data')],
+    State('url', 'search'),
     prevent_initial_call=True,
 )
-def reset_wholemount_params(n_clicks):
-    # Restore every Advanced-projection control to its Fig R2.5 default (the values baked into
-    # control_panel.py / wholemount.LOCKED_PARAMS), so the complicated flower/sphere knobs can
-    # be returned to the published preset in one click. Keep these in sync with control_panel.
-    # Trailing four: the uncaptured-nasal band (layers / depth / dorsal° / ventral°).
-    return 82, 64, 1.0, 1.0, 4, ['enabled'], 'origin', 'arcsin', 1.6, 'deficit', 0.5, 2, 0.13, 45, 55
+def reset_wholemount_params(n_clicks, data_store, url_search):
+    dataset_id = store_dataset_id(data_store)
+    dataset = get_dataset_config(dataset_id) or {}
+    state = (state_for_dataset(url_search, dataset_id)
+             if ctx.triggered_id != 'wm-reset' else None)
+    values = restore_state(state or {'dataset': dataset_id}, dataset)
+    return tuple(values[key] for key in PROJECTION_KEYS)
 
 
 @callback(
@@ -924,7 +929,7 @@ def toggle_group_value_source(group_value_source):
 # ---- Group view: only the distribution styles apply to a continuous metadata value ----
 @callback(
     [Output('group-style', 'options'),
-     Output('group-style', 'value', allow_duplicate=True)],
+     restore_output('group_style')],
     Input('group-value-source', 'value'),
     State('group-style', 'value'),
     prevent_initial_call=True
@@ -950,19 +955,19 @@ def restrict_group_styles(group_value_source, current_style):
 # ---- F2: populate the group-by / split-by / gene-module dropdowns ----
 @callback(
     [Output('group-by-select', 'options'),
-     Output('group-by-select', 'value'),
+     restore_output('group_by'),
      Output('group-split-select', 'options'),
-     Output('group-split-select', 'value'),
+     restore_output('group_split'),
      Output('gene-module-select', 'options'),
-     Output('gene-module-select', 'value'),
+     restore_output('gene_module'),
      Output('group-replicate-select', 'options'),
-     Output('group-replicate-select', 'value'),
+     restore_output('group_replicate'),
      Output('group-gene-select', 'options', allow_duplicate=True),
-     Output('group-gene-select', 'value'),
-     Output('group-style', 'value', allow_duplicate=True),
-     Output('group-positive-only', 'value', allow_duplicate=True),
+     restore_output('group_gene'),
+     restore_output('group_style'),
+     restore_output('group_positive_only'),
      Output('group-meta-select', 'options'),
-     Output('group-meta-select', 'value')],
+     restore_output('group_meta')],
     [Input('data-store', 'data')],
     [State('url', 'search'),
      State('group-value-source', 'value')],
@@ -980,6 +985,8 @@ def populate_group_controls(data_store, url_search, group_value_source):
     # dataset matches the one in the URL, so a later manual dataset switch is not
     # silently re-overridden by stale shared state.
     state = (state_for_dataset(url_search, data_store.get('dataset_id')) if url_search else None) or {}
+    if state:
+        state = restore_state(state, data_store)
 
     column_types = data_store.get('column_types', {}) or {}
     categorical_cols = [c for c, t in column_types.items() if t == 'categorical']
@@ -1044,23 +1051,23 @@ def populate_group_controls(data_store, url_search, group_value_source):
     # Default replicate: shared-URL value, then the configured composite, then a known
     # sample/batch column, else None (Panel A omitted) rather than an arbitrary first
     # categorical column (which could be a barcode/cluster axis).
-    SAMPLE_HINTS = ('library', 'orig.ident', 'sample', 'batch', 'donor', 'genotype')
+    SAMPLE_HINTS = ('library', 'orig.ident', 'sample', 'batch', 'donor')
     if state.get('group_replicate') in valid_replicate:
         replicate_value = state['group_replicate']
     elif default_replicate is not None:
         replicate_value = default_replicate
     else:
-        replicate_value = next((c for c in categorical_cols if c.lower() in SAMPLE_HINTS), None)
+        replicate_value = next((c for c in standalone_cats if c.lower() in SAMPLE_HINTS), None)
 
-    # Group-view gene: shared-URL value, else the dataset's default gene. (Options are
-    # also kept in sync by update_group_gene_select.)
+    # Group-view gene: shared-URL value, else the dataset's default gene. Keep that
+    # value in the blank-search option list so Dash cannot clear it client-side.
     genes = data_store.get('genes', []) or []
-    gene_options = [{'label': g, 'value': g} for g in sorted(genes)]
-    if state.get('group_gene') in genes:
-        gene_value = state['group_gene']
+    if match_gene(state.get('group_gene'), genes):
+        gene_value = match_gene(state['group_gene'], genes)
     else:
         default_gene = data_store.get('default_gene')
-        gene_value = default_gene if default_gene in genes else None
+        gene_value = match_gene(default_gene, genes) or (genes[0] if genes else None)
+    gene_options = gene_search_options(genes, None, gene_value)
 
     # Style + positive-cell gate: shared-URL values, else the figure default. Only the
     # gene-set dot plot is invalid under a metadata value source (the Figure generalizes).
@@ -1093,15 +1100,21 @@ def populate_group_controls(data_store, url_search, group_value_source):
 @callback(
     Output('group-gene-select', 'options', allow_duplicate=True),
     [Input('data-store', 'data'),
-     Input('group-gene-select', 'search_value')],
+     Input('group-gene-select', 'search_value'),
+     Input('url', 'search')],
+    State('group-gene-select', 'value'),
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_group_gene_select(data_store, search_value):
+def update_group_gene_select(data_store, search_value, url_search, current_gene):
     if not data_store or 'genes' not in data_store:
         return []
-    return gene_search_options(data_store['genes'], search_value)
+    dataset_id = store_dataset_id(data_store)
+    state = state_for_dataset(url_search, dataset_id)
+    dataset = get_dataset_config(dataset_id) or {}
+    shared_gene = restore_state(state, dataset)['group_gene'] if state else None
+    return gene_search_options(data_store['genes'], search_value, shared_gene or current_gene)
 
 
 # ---- F4: show/hide the second-gene dropdown ----
@@ -1119,12 +1132,36 @@ def toggle_compare_genes(compare_genes):
 @callback(
     Output('gene-select-2', 'options'),
     [Input('data-store', 'data'),
-     Input('gene-select-2', 'search_value')],
+     Input('gene-select-2', 'search_value'),
+     Input('url', 'search')],
+    State('gene-select-2', 'value'),
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_gene_select_2(data_store, search_value):
+def update_gene_select_2(data_store, search_value, url_search, current_gene):
     if not data_store or 'genes' not in data_store:
         return []
-    return gene_search_options(data_store['genes'], search_value)
+    dataset_id = store_dataset_id(data_store)
+    state = state_for_dataset(url_search, dataset_id)
+    dataset = get_dataset_config(dataset_id) or {}
+    shared_gene = restore_state(state, dataset)['gene2'] if state else None
+    return gene_search_options(data_store['genes'], search_value, shared_gene or current_gene)
+
+
+@callback(
+    restore_output('gene2'),
+    Input('data-store', 'data'),
+    [State('gene-select-2', 'value'), State('url', 'search')],
+    prevent_initial_call=True,
+)
+def restore_comparison_gene(data_store, current_gene, url_search):
+    if not data_store or 'genes' not in data_store:
+        return None
+    dataset = get_dataset_config(store_dataset_id(data_store)) or {}
+    state = state_for_dataset(url_search, store_dataset_id(data_store))
+    desired = restore_state(state, dataset)['gene2'] if state else current_gene
+    genes = data_store['genes']
+    value = (match_gene(desired, genes) or match_gene(dataset.get('default_gene'), genes)
+             or (genes[0] if genes else None)) if desired else None
+    return value
