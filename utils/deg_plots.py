@@ -13,16 +13,22 @@ from utils.plotting import create_scatter_plot, _message_figure
 
 
 def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subtitle=None,
-                          foreground_label='A'):
+                          foreground_label='A', mode='A_vs_B'):
     """Volcano from a results frame with gene / log2FoldChange / padj columns.
     Positive log2FC = enriched in the drawn ('A'-side) region -- named by `foreground_label`
     ('A' normally, 'B' for a B-only draw)."""
     res = res.copy()
     for c in ('padj', 'log2FoldChange'):
         res[c] = pd.to_numeric(res[c], errors='coerce')
+    n_na = int(res['padj'].isna().sum())
+    contrast = f"ROI {foreground_label} / rest" if mode == 'A_vs_rest' else 'ROI A / ROI B'
+    axis_label = f"log2FC ({contrast})"
+    na_note = f"{n_na:,} genes with padj = NA not shown" if n_na else ''
     r = res.dropna(subset=['padj', 'log2FoldChange']).copy()
     if r.empty:
-        return _message_figure("No genes passed filtering for this contrast.")
+        fig = _message_figure("No genes passed filtering for this contrast.")
+        fig.update_layout(xaxis_title=axis_label, title=na_note)
+        return fig
 
     # -log10(padj), with padj==0 clipped to the smallest positive value for a finite y.
     pos = r['padj'][r['padj'] > 0]
@@ -54,11 +60,13 @@ def create_volcano_figure(res, lfc_thresh=1.0, padj_thresh=0.05, top_n=12, subti
     if subtitle is None:
         subtitle = (f"|log2FC| &gt; {lfc_thresh:g} · adj p &lt; {padj_thresh:g} "
                     f"· {int(sig.sum()):,} significant")
+    if na_note:
+        subtitle = f"{subtitle} · {na_note}" if subtitle else na_note
     title = f"Volcano — positive log2FC = enriched in ROI {foreground_label}"
     if subtitle:
         title += f"<br><sub>{subtitle}</sub>"
     fig.update_layout(
-        title=title, xaxis_title="log2 fold change (A / B)",
+        title=title, xaxis_title=axis_label,
         yaxis_title="-log10 adjusted p", template='plotly_white',
         height=520, showlegend=False, margin=dict(t=70))
     return fig

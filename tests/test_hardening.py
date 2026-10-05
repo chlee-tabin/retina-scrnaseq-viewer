@@ -105,7 +105,7 @@ def test_hover_orientation():
     x, y = grid()
     df = pd.DataFrame({'x': x, 'y': y, 'color': [1., 2., 3., 4.]})
     fig = plotting.create_binned_plot(df, 'custom_embedding', 'gene_expression',
-                                     bin_size=2, percentile=1)
+                                     bin_size=2, percentile=1, min_cells=1)
     trace = fig.data[0]
     assert np.array_equal(trace.z, [[1, 3], [2, 4]])
     for j in range(2):
@@ -118,7 +118,7 @@ def test_hover_orientation():
     df = pd.DataFrame({'x': np.repeat(x, [1, 2, 3, 4]),
                        'y': np.repeat(y, [1, 2, 3, 4]), 'color': 'group'})
     trace = plotting.create_binned_plot(df, 'custom_embedding', 'group', bin_size=2,
-                                       treat_as_categorical=True).data[0]
+                                       treat_as_categorical=True, min_cells=1).data[0]
     for j in range(2):
         for i in range(2):
             assert f'Bin: ({i},{j})' in trace.customdata[j][i]
@@ -128,50 +128,50 @@ def test_hover_orientation():
 def test_colour_only_clipping_and_signed_metadata():
     x, y = grid()
     vals = [np.array([1., 1., 1., 10.]), np.array([10., 10., 10., 10.])]
-    h, _, _, _, vmax = plotting._binned_mean(x, y, vals[0], bin_size=2, percentile=.5)
+    h, _, _, _, vmax = plotting._binned_mean(x, y, vals[0], bin_size=2, percentile=.5, min_cells=1)
     assert vmax == 1 and h[1, 1] == 10
     fig = plotting.create_binned_plot(pd.DataFrame({'x': x, 'y': y, 'color': vals[0]}),
                                      'custom_embedding', 'gene_expression', bin_size=2,
-                                     percentile=.5)
+                                     percentile=.5, min_cells=1)
     assert fig.layout.coloraxis.cmax == 1 and fig.data[0].z[1][1] == 10
     assert 'Value: 10.00' in fig.data[0].customdata[1][1]
     for shared in (True, False):
         fig = plotting.create_dual_gene_figure(x, y, vals, ['g1', 'g2'], 'custom_embedding',
                                               binned=True, bin_size=2, percentile=.5,
-                                              shared_scale=shared)
+                                              shared_scale=shared, min_cells=1)
         a, b = fig.data
         assert a.z[1][1] == b.z[1][1] == 10  # native Heatmap hover reads the unclipped z
         assert a.zmax == (10 if shared else 1) and b.zmax == 10
 
     # Flower and sphere also use unclipped grid data with one common colour maximum.
     fig = plotting.create_dual_gene_sphere_figure(y, x, vals, ['g1', 'g2'], binned=True,
-                                                 bin_size=2, percentile=.5, shared_scale=True)
+                                                 bin_size=2, percentile=.5, shared_scale=True, min_cells=1)
     meshes = [t for t in fig.data if t.type == 'mesh3d']
     assert len(meshes) == 2 and all(t.cmax == 10 for t in meshes)
     assert max(meshes[0].intensity) == 10
     assert any('10.00<br>' in str(t.text) for t in fig.data if t.type == 'scatter3d')
     fig = plotting.create_dual_gene_wholemount_figure(y, x, vals, ['g1', 'g2'],
                                                      bin_size=2, percentile=.5, shared_scale=True,
-                                                     params={'cut_angles_deg': ()})
+                                                     params={'cut_angles_deg': ()}, min_cells=1)
     bars = [t for t in fig.data if t.type == 'scatter' and t.marker.cmax is not None]
     assert len(bars) == 2 and all(t.marker.cmax == 10 for t in bars)
     assert any('10.00<br>' in str(t.text) for t in fig.data)
 
     signed = np.array([-4., -2., 1., 3.])
     fig = plotting.create_binned_plot(pd.DataFrame({'x': x, 'y': y, 'color': signed}),
-                                     'custom_embedding', 'DV.Score', bin_size=2)
+                                     'custom_embedding', 'DV.Score', bin_size=2, min_cells=1)
     assert fig.layout.coloraxis.cmin < 0
     assert fig.layout.coloraxis.cmin == -fig.layout.coloraxis.cmax
-    sphere = plotting.create_sphere_binned_figure(y, x, signed, bin_size=2)
+    sphere = plotting.create_sphere_binned_figure(y, x, signed, bin_size=2, min_cells=1)
     mesh = next(t for t in sphere.data if t.type == 'mesh3d')
     assert mesh.cmin < 0 and mesh.cmin == -mesh.cmax
     flower = plotting.create_wholemount_binned_figure(y, x, signed, bin_size=2,
-                                                     params={'cut_angles_deg': ()})
+                                                     params={'cut_angles_deg': ()}, min_cells=1)
     assert any(t.marker.cmin is not None and t.marker.cmin < 0
                and t.marker.cmin == -t.marker.cmax for t in flower.data if t.type == 'scatter')
     all_negative = plotting.create_binned_plot(
         pd.DataFrame({'x': x, 'y': y, 'color': -np.arange(1., 5.)}),
-        'custom_embedding', 'DV.Score', bin_size=2)
+        'custom_embedding', 'DV.Score', bin_size=2, min_cells=1)
     assert all_negative.layout.coloraxis.cmin < 0 < all_negative.layout.coloraxis.cmax
 
 
@@ -339,7 +339,7 @@ def test_load_single_flight_and_identity():
         assert data_loading.load_dataset_state({'dataset_id': 'unknown', 'filename': paths[0]}) == (None, {})
         for path in paths[1:]:
             data_loading.load_adata(path)
-        data_loading.load_adata(paths[0])  # LRU eviction still works
+        data_loading.load_adata(paths[0])  # Evicted by the 2-entry bound: reloaded.
         assert reader.call_count == 4 and data_loading.load_adata.cache_info().currsize == 2
     data_loading.load_adata.cache_clear()
     with patch.object(data_loading, 'load_dataset_config', return_value=cfg), \
@@ -395,6 +395,10 @@ def test_callbacks_and_download():
             assert plot.call_args.kwargs['smooth_sigma'] == 2
             assert plot.call_args.kwargs['min_cells'] == 5
         args.update(color_by='barcode', bin_number=2)
+        with patch.object(main, 'create_binned_plot', return_value=plotting.go.Figure()) as plot:
+            main.update_plot(**args)
+            assert plot.call_args.args[2] == 'gene_expression'
+        args.update(color_by=None)
         with patch.object(main, 'create_binned_plot', return_value=plotting.go.Figure()) as plot:
             main.update_plot(**args)
             assert plot.call_args.args[2] == 'gene_expression'

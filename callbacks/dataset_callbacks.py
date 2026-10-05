@@ -1,4 +1,4 @@
-from dash import Input, Output, State, callback
+from dash import Input, Output, callback, no_update
 from utils.error_handling import handle_callback_error, log_callback_info
 from utils.data_loading import gene_search_options
 import logging
@@ -18,13 +18,18 @@ logger = logging.getLogger(__name__)
      Output('gene-select', 'options', allow_duplicate=True)],
     [Input('color-select', 'value'),
      Input('data-store', 'data'),
-     Input('gene-select', 'search_value')],
+     Input('gene-select', 'search_value'),
+     Input('gene-select', 'value')],
     prevent_initial_call=True
 )
 @handle_callback_error
 @log_callback_info
-def update_gene_select(color_value, data_store, search_value):
-    # The gene picker is only meaningful when colouring by gene expression.
+def update_gene_select(color_value, data_store, search_value, current_gene):
+    # The gene picker is only meaningful when colouring by gene expression. Hide it but
+    # keep its options, so switching back to gene expression keeps the selected gene.
     if color_value != 'gene_expression' or not data_store or 'genes' not in data_store:
-        return {'display': 'none'}, []
-    return {'display': 'block'}, gene_search_options(data_store['genes'], search_value)
+        return {'display': 'none'}, no_update
+    # Options follow the LIVE value (an Input, whoever set it: dataset load, link restore
+    # or the user) plus the search text, so Dash never clears a selection for being
+    # absent from its options.
+    return {'display': 'block'}, gene_search_options(data_store['genes'], search_value, current_gene)

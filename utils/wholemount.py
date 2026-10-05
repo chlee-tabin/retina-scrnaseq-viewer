@@ -1,8 +1,8 @@
 """Whole-mount ("flower" / orange-peel) reprojection of the (DV.Score, NT.Score) map.
 
-A standalone, pure-numpy port of `flower_reproj/flower_reproject.py:flower_transform`
-from the analysis repo (retina-spatial-scrna-analysis), shipped there as a reviewer
-response: the flat DV/NT score plane is warped to resemble a dissected, flat-mounted
+A standalone, pure-numpy implementation of the whole-mount model in the manuscript
+Methods accompanying https://github.com/chlee-tabin/retina-spatial-scrna-analysis:
+the flat DV/NT score plane is warped to resemble a dissected, flat-mounted
 retinal whole-mount, so peripheral relationships are not artefactually compressed.
 
 Geometric model (verbatim from the source):
@@ -26,6 +26,7 @@ ventral = bottom; HAA at centre.
 """
 import numpy as np
 import pandas as pd
+from utils.smoothing import DEFAULT_MIN_CELLS_PER_BIN, smooth_grid
 
 # Coordinate-relevant defaults from flower_reproject.DEFAULT_PARAMS (the render-only
 # missing_nasal_* keys are dropped; see the module docstring).
@@ -60,6 +61,29 @@ LOCKED_PARAMS = dict(
     cut_angles_deg=(0, 90, 180, 270),
     stretch_bumps=((180.0, 0.60, 50.0), (225.0, 0.85, 50.0), (45.0, 0.40, 50.0)),
 )
+
+
+def dataset_params(dataset):
+    """Projection defaults: tuned chick bumps, neutral stretch for other species."""
+    params = {**DEFAULT_PARAMS, **LOCKED_PARAMS}
+    if not str((dataset or {}).get('dataset_id', '')).startswith('chick'):
+        params['stretch_bumps'] = ()
+    params.update((dataset or {}).get('wholemount_params') or {})
+    return params
+
+
+def projection_controls(dataset):
+    """Control defaults derived from this dataset's projection and nasal overlay."""
+    p = dataset_params(dataset)
+    ng = (dataset or {}).get('nasal_gap') or {}
+    return dict(wm_rho_nt=p['rho_max_nt_deg'], wm_rho_dv=p['rho_max_dv_deg'],
+                wm_gap=p['gap_gain'], wm_stretch=1.0, wm_cuts=len(p['cut_angles_deg']),
+                wm_symmetric=['enabled'] if p['symmetric'] else [],
+                wm_pole='median' if p['pole'] == 'median' else 'origin',
+                wm_dewarp=p['dewarp'], wm_pow=p['pow_p'], wm_gap_mode=p['gap_mode'],
+                wm_gap_frac=p['gap_frac'], ng_layers=ng.get('layers', 2),
+                ng_frac=ng.get('frac', 0.13), ng_dorsal=ng.get('dorsal_deg', 45),
+                ng_ventral=ng.get('ventral_deg', 55))
 
 
 def _resolve_pole(dv, nt, pole):
@@ -235,7 +259,7 @@ def sphere_coords(dv, nt, params=None):
     return sin_rho * np.cos(th), sin_rho * np.sin(th), np.cos(rho)
 
 
-def marker_footprint_center(dv, nt, present, *, bin_size=50, min_cells=5):
+def marker_footprint_center(dv, nt, present, *, bin_size=50, min_cells=DEFAULT_MIN_CELLS_PER_BIN):
     """Geometric centre of a sparse marker's footprint in (DV, NT) score space: the
     equal-weight centroid of the score-grid BINS that contain >=1 'present' cell (and clear the
     cell floor). Returns (dv, nt) or None.
@@ -274,8 +298,8 @@ HAA_MODE_DESC = {
 }
 
 
-def haa_center(dv, nt, expr, mode='domain', *, bin_size=50, min_cells=5, frac=0.5,
-               peak_pctile=95.0, smooth_sigma=0.0):
+def haa_center(dv, nt, expr, mode='domain', *, bin_size=50, min_cells=DEFAULT_MIN_CELLS_PER_BIN, frac=0.5,
+               peak_pctile=95.0, smooth_sigma=0.0, smoothing_mode='zero_fill'):
     """(dv, nt) centre of a marker's HAA in score space, by one of several definitions; None if
     undefined. The marker (chick: CYP26C1) is detected in <1% of cells and ring-ish, so the
     estimators legitimately differ -- the viewer exposes `mode` so users can explore:
@@ -306,10 +330,7 @@ def haa_center(dv, nt, expr, mode='domain', *, bin_size=50, min_cells=5, frac=0.
     with np.errstate(invalid='ignore', divide='ignore'):
         bm = np.where(valid, esum / np.maximum(cnt, 1.0), np.nan)
     if smooth_sigma and smooth_sigma > 0:
-        # Mirror _binned_mean: fill invalid with 0, smooth, then re-mask -> the displayed field.
-        from scipy.ndimage import gaussian_filter
-        bm = gaussian_filter(np.where(valid, np.nan_to_num(bm), 0.0), sigma=float(smooth_sigma))
-        bm = np.where(valid, bm, np.nan)
+        bm = smooth_grid(bm, valid, smooth_sigma, smoothing_mode)
     finite_pos = bm[np.isfinite(bm) & (bm > 0)]
     if finite_pos.size == 0:
         return None

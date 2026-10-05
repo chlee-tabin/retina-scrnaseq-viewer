@@ -316,6 +316,15 @@ def create_control_panel():
                                     value=['enabled'],  # default: smoothed, matching the paper's spatial images
                                     className="mb-2"
                                 ),
+                                dcc.RadioItems(
+                                    id='smoothing-mode',
+                                    options=[
+                                        {'label': 'Zero-fill smoothing (manuscript default)', 'value': 'zero_fill'},
+                                        {'label': 'Mask-normalised smoothing', 'value': 'mask_normalised'},
+                                    ],
+                                    value='zero_fill', className='small mb-2',
+                                    labelStyle={'display': 'block'},
+                                ),
                                 # Smoothing strength (Gaussian sigma, in bin units). The per-dataset
                                 # value in datasets_config.yml is just the default the slider opens on;
                                 # update_data sets it on dataset load (and a shared link overrides it).

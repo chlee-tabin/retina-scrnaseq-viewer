@@ -1,11 +1,11 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback, no_update
+from dash import html, dcc, Input, Output, State, callback, clientside_callback, no_update
 import dash_bootstrap_components as dbc
 import numpy as np
 import pandas as pd
 import logging
-import time
 import argparse
+from logging.handlers import RotatingFileHandler
 from flask import send_file
 import os
 import re
@@ -25,11 +25,12 @@ from callbacks.deg_callbacks import *
 
 # Import utilities
 from utils.data_loading import (load_adata, load_dataset_config, validate_datasets,
-                                choose_default_embedding, get_dataset_config, dataset_norm_target)
+                                choose_default_embedding, get_dataset_config, dataset_norm_target,
+                                dataset_column_types, resolve_data_path, gene_search_options,
+                                match_gene)
 from utils.error_handling import handle_callback_error, log_callback_info
-from utils.state import state_for_dataset
-from utils.smoothing import resolve_smooth_sigma
-from utils.validation import obs_column_types
+from utils.state import state_for_dataset, restore_state, restore_output, data_version_notice
+from utils.smoothing import resolve_smooth_sigma, DEFAULT_MIN_CELLS_PER_BIN
 from components.status_bar import create_status_bar
 
 # Add command line argument parsing. Use parse_known_args (not parse_args) so that
@@ -40,13 +41,14 @@ parser.add_argument('-debug', action='store_true', help='Enable debug logging')
 args, _ = parser.parse_known_args()
 
 # Configure logging based on command line argument
+log_handlers = [logging.StreamHandler()]
+if args.debug:
+    log_handlers.append(RotatingFileHandler('app_debug.log', maxBytes=5 * 1024 * 1024,
+                                            backupCount=3))
 logging.basicConfig(
     level=logging.DEBUG if args.debug else logging.INFO,
     format='%(asctime)s %(levelname)s %(name)s %(message)s',
-    handlers=[
-        logging.FileHandler("app_debug.log"),
-        logging.StreamHandler()
-    ]
+    handlers=log_handlers
 )
 logger = logging.getLogger(__name__)
 
@@ -81,45 +83,68 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     suppress_callback_exceptions=True
 )
-app.title = "Single-cell Data Viewer"  # Set the title for the browser tab
+app.title = "Retina scRNA-seq Pattern Viewer"
 server = app.server
 
 # Main layout with fixed sidebar
-app.layout = dbc.Container([
-    dcc.Location(id='url', refresh=False),
-    dcc.Store(id='data-store'),
-    dcc.Store(id='selection-store'),
-    dcc.Store(id='session-id', data=str(time.time())),
-    
-    # Add interval component here
-    dcc.Interval(
-        id='interval-component',
-        interval=5000,  # Update every 5 seconds
-        n_intervals=0
-    ),
-    
-    # Add status bar at the top
-    create_status_bar(),
-    
-    dbc.Row([
-        # Fixed sidebar
-        dbc.Col(
-            create_sidebar(),
-            width=3,
-            className="position-fixed",
-            style={
-                "height": "100vh",
-                "overflowY": "auto"
-            }
+def create_layout():
+    return dbc.Container([
+        dcc.Location(id='url', refresh=False),
+        dcc.Store(id='data-store'),
+        dcc.Store(id='selection-store'),
+        # The browser-side callback below assigns one UUID per browser session. Keeping
+        # the layout static avoids allocating a new Dash component tree for every
+        # ``/_dash-layout`` request.
+        dcc.Store(id='session-id', storage_type='session'),
+
+        # Add interval component here
+        dcc.Interval(
+            id='interval-component',
+            interval=30000,  # Update every 30 seconds
+            n_intervals=0
         ),
-        # Main content with offset
-        dbc.Col(
-            create_main_panel(),
-            width=9,
-            className="offset-3"
-        )
-    ], className="g-0")  # g-0 removes gutters
-], fluid=True)
+
+        # Add status bar at the top
+        create_status_bar(),
+
+        dbc.Row([
+            # Fixed sidebar
+            dbc.Col(
+                create_sidebar(),
+                width=3,
+                className="position-fixed",
+                style={
+                    "height": "100vh",
+                    "overflowY": "auto"
+                }
+            ),
+            # Main content with offset
+            dbc.Col(
+                create_main_panel(),
+                width=9,
+                className="offset-3"
+            )
+        ], className="g-0")  # g-0 removes gutters
+    ], fluid=True)
+
+
+app.layout = create_layout()
+
+
+clientside_callback(
+    """
+    function(_pathname, current) {
+        if (current) { return window.dash_clientside.no_update; }
+        if (window.crypto && window.crypto.randomUUID) {
+            return window.crypto.randomUUID();
+        }
+        return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    }
+    """,
+    Output('session-id', 'data'),
+    Input('url', 'pathname'),
+    State('session-id', 'data'),
+)
 
 # Callback to initialize dataset dropdown
 @callback(
@@ -219,12 +244,12 @@ def update_dataset_info(dataset_id, data_store):
     [Output('data-store', 'data', allow_duplicate=True),
      Output('embedding-select', 'options', allow_duplicate=True),
      Output('color-select', 'options', allow_duplicate=True),
-     Output('color-select', 'value', allow_duplicate=True),
-     Output('gene-select', 'value', allow_duplicate=True),
+     restore_output('color'),
+     restore_output('gene'),
      Output('gene-select', 'options', allow_duplicate=True),
      Output('loading-output', 'children', allow_duplicate=True),
-     Output('embedding-select', 'value', allow_duplicate=True),
-     Output('smooth-sigma-slider', 'value', allow_duplicate=True)],
+     restore_output('embedding'),
+     restore_output('smooth_sigma')],
     [Input('dataset-select', 'value'),
      Input('url', 'search')],
     [State('color-select', 'value'),
@@ -244,10 +269,9 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         adata = load_adata(dataset['file_path'])
         
         # Determine column types. A low-cardinality INTEGER column (cluster ids, Phase
-        # codes) is treated as CATEGORICAL -- matching _is_categorical_series in
-        # main_callbacks -- so such an annotation is offered in the group-by / colour
-        # controls instead of being mis-handled as a continuous axis.
-        column_types = obs_column_types(adata.obs)
+        # codes) is categorical in the shared typing helper, so it is offered in
+        # the group-by / colour controls instead of treated as a continuous axis.
+        column_types = dataset_column_types(dataset['file_path'])
 
         # Create embedding list including custom embedding option
         available_embeddings = list(adata.obsm.keys())
@@ -264,13 +288,10 @@ def update_data(dataset_id, url_search, current_color, current_gene):
             # used by the binned/smoothed view in main_callbacks.update_plot. (smooth_sigma
             # is NOT stored here -- it's now the smooth-sigma-slider's value, seeded from
             # the same config by resolve_smooth_sigma below; the slider is the source of truth.)
-            'min_cells_per_bin': dataset.get('min_cells_per_bin', 1),
+            'min_cells_per_bin': dataset.get('min_cells_per_bin', DEFAULT_MIN_CELLS_PER_BIN),
             'color_floor': dataset.get('color_floor', 0.05),
-            # Optional per-dataset gene sets for the "Expression by group" dot
-            # plot, and a path to precomputed DEG results. Both default to
-            # absent/empty so datasets without them simply hide the controls.
+            # Optional per-dataset gene sets for the group-view dot plot.
             'gene_modules': dataset.get('gene_modules', {}),
-            'deg_results_path': dataset.get('deg_results_path'),
             # Default gene (for the group view), categorical display (consistent
             # per-type colours + biological order), and the pseudobulk replicate
             # unit -- all optional, all from datasets_config.yml.
@@ -303,8 +324,9 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         # Apply shared-URL state only when it belongs to the loaded dataset; the
         # state_for_dataset seam centralises this stale-state guard for all URL readers.
         state = state_for_dataset(url_search, dataset_id) if url_search else None
-        url_color = state.get('color') if state else None
-        url_gene = state.get('gene') if state else None
+        restored = restore_state(state, dataset) if state else {}
+        url_color = restored.get('color')
+        url_gene = restored.get('gene')
         # Smoothing-slider value: shared-link sigma > old per-dataset default (legacy
         # link) > current config default. The enable-smoothing checkbox still gates it.
         smooth_sigma_value = resolve_smooth_sigma(
@@ -326,24 +348,29 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         valid_color_values = ['gene_expression'] + list(column_types)
         if url_color in valid_color_values:
             color_value = url_color
-        elif current_color in valid_color_values:
+        elif not state and current_color in valid_color_values:
             color_value = current_color
         else:
             color_value = 'gene_expression'
 
-        if url_gene in data_store['genes']:
-            gene_value = url_gene
-        elif current_gene in data_store['genes']:
-            gene_value = current_gene
-        elif default_gene in data_store['genes']:
-            gene_value = default_gene
-        else:
-            gene_value = None
+        genes = data_store['genes']
+        fallback_gene = match_gene(default_gene, genes) or (genes[0] if genes else None)
+        gene_value = (match_gene(url_gene if state else current_gene, genes)
+                      or fallback_gene)
         
-        # Pre-populate gene options so the default gene's value is valid the
-        # moment it is set (a Dropdown value absent from its options is dropped
-        # client-side; gene options are otherwise filled by update_gene_select).
-        gene_options = [{'label': g, 'value': g} for g in sorted(data_store['genes'])]
+        # A blank search has no result set, but it must retain the selected value:
+        # Dash clears a Dropdown value that is absent from its options.
+        gene_options = gene_search_options(genes, None, gene_value)
+        notices = [data_version_notice(state, dataset)]
+        shared_genes = ('group_gene',) if restored.get('plot_type') == 'group' else ('gene',)
+        if restored.get('compare_genes'):
+            shared_genes += ('gene2',)
+        for key in shared_genes:
+            requested = state.get(key) if state else None
+            if requested and not match_gene(requested, genes):
+                shown = gene_value if key == 'gene' else fallback_gene
+                notices.append(f"gene {requested} not found in this dataset; showing {shown}")
+        notice = [dbc.Alert(text, color='warning') for text in notices if text]
 
         # Pick the embedding to open on: a UMAP for datasets without DV/NT spatial
         # scores (e.g. the full-retina object) so they don't open on a blank custom
@@ -351,9 +378,9 @@ def update_data(dataset_id, url_search, current_color, current_gene):
         embedding_value = choose_default_embedding(
             available_embeddings, set(data_store['metadata_cols']),
             config_default=dataset.get('default_embedding'),
-            url_embedding=(state.get('embedding') if state else None))
+            url_embedding=restored.get('embedding'))
 
-        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, "", embedding_value, smooth_sigma_value
+        return data_store, embedding_options, color_options, color_value, gene_value, gene_options, notice, embedding_value, smooth_sigma_value
         
     except Exception as e:
         error_message = "Unable to load this dataset. Please retry later."
@@ -383,7 +410,7 @@ def update_data(dataset_id, url_search, current_color, current_gene):
 @server.route('/download/<path:filepath>')
 def download_file(filepath):
     try:
-        allowed = {os.path.basename(ds['file_path'])
+        allowed = {os.path.basename(ds['file_path']): ds['file_path']
                    for ds in load_dataset_config()['datasets'].values()}
         if filepath not in allowed or filepath != os.path.basename(filepath):
             return "Forbidden", 403
@@ -392,8 +419,8 @@ def download_file(filepath):
         # paths and confirm the request stays within DATA_DIR. This rejects
         # path-traversal attempts (e.g. "../../etc/passwd", absolute paths, or
         # symlink escapes) instead of relying on os.path.basename alone.
-        data_root = os.path.realpath(DATA_DIR)
-        requested = os.path.realpath(os.path.join(data_root, filepath))
+        data_root = os.path.realpath(os.getenv('DATA_DIR', 'data'))
+        requested = os.path.realpath(resolve_data_path(allowed[filepath]))
 
         # commonpath raises ValueError on mixed drives/relative inputs; treat
         # any such case, or a resolved path outside data_root, as forbidden.

@@ -1,9 +1,9 @@
 # Retina scRNA-seq Viewer — Specification
 
 A living spec for the Dash/Plotly single-cell viewer. It defines the view model,
-the controls, the dataset-config schema, the shareable-state schema (v2), and the
+the controls, the dataset-config schema, the shareable-state schema (v4), and the
 definition of the "Expression by group" figure. **This document is the contract used
-for independent (ultracode) review** — each claim below should hold in the code.
+for independent review** — each claim below should hold in the code.
 
 ## Goals
 
@@ -22,7 +22,9 @@ Two top-level views, switched by **View** (`plot-type`):
 - **Embedding / spatial map** (`map`): a 2D embedding (UMAP / PCA / Harmony) or the
   custom DV/NT topographic axes, coloured by gene expression or an obs column.
   Supports binned + Gaussian-smoothed spatial maps, a "% positive (detected)" bin
-  colour mode, and two-gene side-by-side.
+  colour mode, two-gene side-by-side, flower and 3D sphere projections, and an
+  optional chick HAA pointer / uncaptured-nasal overlay. The raw custom map supports
+  exploratory polygon ROI pseudobulk differential expression and figure-region presets.
 - **Expression by group** (`group`): distribution of a gene (or gene set) across the
   categories of an obs column. Styles: **Figure** (default), Violin, Box, Strip,
   Dot plot.
@@ -37,6 +39,7 @@ Two top-level views, switched by **View** (`plot-type`):
 | `enable-binning` | map (custom) | Binned "metacell" spatial view |
 | `bin-stat` | map (custom) | Bin colour: `mean` expression vs `frac_pos` (% positive) |
 | `enable-smoothing` | map (custom) | Gaussian smoothing of the binned map (on/off gate) |
+| `smoothing-mode` | map (custom) | Manuscript zero-fill (default) vs opt-in mask-normalised smoothing |
 | `smooth-sigma-slider` | map (custom) | Smoothing strength σ (0–4, bin units); per-dataset config = default |
 | `bin-number-slider` | map (custom) | Number of bins (2–120) |
 | `percentile-slider` | map (custom) | Colour-scale percentile cutoff |
@@ -53,19 +56,45 @@ Two top-level views, switched by **View** (`plot-type`):
 | `group-replicate-select` | group (figure) | Pseudobulk replicate unit (Panel A) |
 | `gene-module-select` | group (dotplot) | Gene set for the dot plot |
 | `group-value-source` / `group-meta-select` | group | Plot value: gene expression vs a continuous `.obs` variable |
-| `custom-projection` | map (custom) | Raw axes vs whole-mount (DV/NT flower) |
+| `custom-projection` | map (custom) | Raw axes vs whole-mount flower vs 3D sphere |
 | `wm-rho-nt` / `wm-rho-dv` / `wm-gap` / `wm-stretch` / `wm-cuts` | map (flower) | Flower extent, relief width, petal stretch, number of cuts |
-| `wm-symmetric` / `wm-pole` / `wm-dewarp` / `wm-pow` / `wm-gap-mode` / `wm-gap-frac` | map (flower) | Advanced flower geometry (defaults reproduce Fig R2.5) |
+| `wm-symmetric` / `wm-pole` / `wm-dewarp` / `wm-pow` / `wm-gap-mode` / `wm-gap-frac` | map (flower) | Advanced flower geometry (defaults come from the current dataset) |
+| `haa-mode` | map (custom, chick) | Off / footprint / expression / domain / peak HAA pointer |
+| `nasal-gap-layers` / `nasal-gap-frac` / `nasal-gap-dorsal` / `nasal-gap-ventral` | flower/sphere (chick) | Render-only uncaptured-nasal cap reach / depth / arc |
+| `sphere-camera-store` | sphere | Persist and share the 3D camera |
+| `wm-reset` | flower/sphere | Reset to the current dataset's projection defaults |
+| ROI A/B draw / clear, `roi-preset-select` | map (raw custom axes) | Polygon ROIs or manuscript bin-region presets |
+| `deg-min-cells` / `run-deg-btn` | ROI DE | Pseudobulk cell floor and explicit run |
+| `volcano-lfc-thresh` / `volcano-padj-thresh` / `deg-download-btn` | ROI DE | Display thresholds and result CSV |
 
 Style-specific group controls are revealed by `group-style`: the figure controls
 show only for `figure`, the module selector only for `dotplot`.
 
 ## Dataset config schema (`datasets_config.yml`)
 
-Per dataset (all optional unless noted): `title`, `description`, `file_path`
-(required), `default_gene`, `default_embedding`, `smooth_sigma`,
-`min_cells_per_bin`, `color_floor`, `gene_modules`, `deg_results_path` (reserved,
-currently unused), plus:
+Required per-dataset keys: `title`, `description`, `file_path`, `last_updated`
+(the same contract as README). Other keys are optional, including `metadata`,
+`default_gene`, `default_embedding`, `smooth_sigma`, `min_cells_per_bin`,
+`color_floor`, `gene_modules`, plus:
+
+- **`sha256`** — streamed checksum; configured downloads and local files must match.
+  Every shipped dataset is pinned. Verification is cached by path, size and mtime.
+- **`wholemount_params`** — overrides for `utils/wholemount.py::LOCKED_PARAMS`.
+  Chick keeps the tuned directional stretch; human/mouse use an empty stretch list.
+  Dataset changes and Reset projection apply this dataset's defaults.
+- **`figure_regions`** — named `{name, n, nt: [lo, hi], dv: [lo, hi]}` presets.
+  Select directly on zero-based bin indices with half-open tests
+  `nt[0] <= NT_bin < nt[1]+1` and `dv[0] <= DV_bin < dv[1]+1`.
+  Axis maxima have index `n` and are excluded. Rectangles display the outline;
+  preset selection uses the bin test, including after a rounded share restore.
+- **`haa_marker`** — marker for the optional HAA pointer (chick `CYP26C1`).
+- **`nasal_gap`** — render-only uncaptured-nasal cap (`frac`, `layers`, optional
+  `dorsal_deg`, `ventral_deg`); absent means no overlay.
+
+Top-level **`hf_data_revision`** pins the Hugging Face data commit; the
+`HF_DATA_REVISION` environment variable overrides it. A leading `data/` in
+`file_path` is removed before joining under `DATA_DIR`; nested paths are preserved
+across loading, provisioning and downloads. Dataset basenames must be unique.
 
 - **`annotation_column`** — the default categorical column for grouping/colour.
 - **`annotation_order`** — biological (maturation) order; applied to the scatter
@@ -97,8 +126,7 @@ Two panels over the same embedding, one gene each.
 
 ## Expression-by-group "Figure" (#4) — NPY 2-panel definition
 
-Plotly reproduction of `scripts/viewer_full_chick/16b_npy_figure.R` (analysis repo,
-PR #19). For a gene `g`, a grouping column, and a replicate unit:
+Plotly reproduction of the manuscript Methods (expression-by-group figure). For a gene `g`, a grouping column, and a replicate unit:
 
 - **Panel A — pseudobulk per (group × replicate)**: one dot per replicate;
   `y = log1p( Σ raw / Σ depth × T )`; dot **size increases with n cells**; grey
@@ -130,13 +158,44 @@ convention). The
 x-axis follows `annotation_order`. A default module is preselected so the dot plot
 renders immediately when chosen.
 
-## Share state (v3)
+## Spatial smoothing
 
-Base64-encoded JSON carried in `?state=`. Keys (only those relevant to the current
-view are written; absent keys restore to defaults):
+Zero-fill Gaussian smoothing remains the default to match the manuscript pipeline:
+masked bins contribute zero to the convolution and are masked again afterward.
+The opt-in `mask_normalised` mode uses `smooth(values × mask) / smooth(mask)` and
+re-masks invalid bins; it preserves an isolated valid 100% bin at 100% rather than
+attenuating it near empty bins. Sigma and the enable-smoothing gate apply to both
+modes, in raw, flower, sphere and comparison views. The HAA marker uses the same mode.
+
+## ROI differential expression (exploratory)
+
+Polygon selection uses raw custom-axis coordinates; manuscript figure presets use
+the half-open bin gates above. With one ROI, rest excludes all cells with non-finite
+plot coordinates. Two ROIs form a disjoint A/B contrast, with overlap going to the
+smaller ROI. The volcano names the actual A/B or region/rest contrast and counts
+excluded `padj = NA` genes.
+
+Replicate unit = configured `replicate_columns` (chick: library × genotype;
+human/mouse: library); cells missing any replicate label are excluded and reported.
+Counts must be verified raw counts or an integer-like log1p(CP) reconstruction.
+The design is `~ library + condition` when estimable, otherwise explicitly reported
+`~ condition`; fit failures never trigger a silent refit. The `min_frac=0.5` gene
+filter is a viewer-only addition that changes padj versus the manuscript's tables.
+The [public analysis repository](https://github.com/chlee-tabin/retina-spatial-scrna-analysis)
+contains `scripts/figures/sfig24_area_deg.R` and
+`scripts/figures/supptables1_2_area_deg.R` (chick Fig 6H, human Fig S24).
+
+## Share state (v4)
+
+Base64-encoded JSON carried in `?state=`. The single owner is
+`utils/state.py::STATE_SCHEMA` (component, property, default, coercion, version
+introduced, restoration owner). New links capture all controls; omitted keys in
+older links reset to schema defaults, clearing a recipient's comparison gene and
+shared scale. Dataset-dependent defaults are resolved from server configuration.
 
 ```
-v=3, dataset, embedding, color, gene, mode, plot_type, smooth_sigma,
+v=4, dataset, data_version, embedding, color, gene, mode, plot_type,
+  smooth_sigma, smoothing_mode,
 compare_genes, gene2, compare_shared_scale,                       # two-gene
 custom_x, custom_y, bins, percentile, enable_binning,             # map binning
   enable_smoothing, bin_stat,
@@ -147,22 +206,23 @@ ng_layers, ng_frac, ng_dorsal, ng_ventral,                        # uncaptured-n
 haa_mode,                                                         # HAA pointer mode (off/footprint/expression/domain/peak)
 sphere_cam,                                                       # 3D-sphere viewpoint (camera; both panels)
 group_by, group_split, group_gene, group_style, gene_module,      # group view
-  group_positive_only, group_replicate, group_value_source, group_meta
+  group_positive_only, group_replicate, group_value_source, group_meta,
+roi, volcano_lfc, volcano_padj, deg_min_cells,                    # ROI DE
 ```
 
 Added in v0.221 (additive, backward compatible — pre-v0.221 links omit these keys
 and restore the R2.5 cap defaults + the default face-on camera): `ng_layers`,
 `ng_frac`, `ng_dorsal`, `ng_ventral` (the uncaptured-nasal-cap extent / wedge,
-written for any non-raw whole-mount view); `haa_mode` (the HAA-pointer definition,
-written for any custom-embedding view); and `sphere_cam` (the 3D camera, written
-only in sphere mode when the user has rotated; one camera covers both compare panels).
+historically written for non-raw whole-mount views); `haa_mode` (the HAA-pointer
+definition); and `sphere_cam` (one camera covers both compare panels). v4 captures
+these controls in every link, including a null camera for the face-on default.
 
 Added in v0.31 — share schema bumped **v2 → v3** (additive, backward compatible):
 `smooth_sigma`, the Gaussian smoothing strength, now a live slider rather than a fixed
 per-dataset config value (the config value is just the slider's default on dataset
-load). Written for every new link (top-level, not only the spatial view) so a recipient
+load). Captured for every new link (top-level, not only the spatial view) so a recipient
 who later switches to the map gets the sharer's strength. A **pre-slider link is
-identified by its schema version** (`v < 3`): for those, `update_data` restores the
+identified by its schema version** (`v < 3`): for those, `decode_state` migrates the
 per-dataset default that was in effect then (`LEGACY_SMOOTH_SIGMA` in
 `utils/smoothing.py` — `human_rpc` **0.5** (the old near-no-op default, since corrected
 to 2.0), `chick_rpc`/`mouse_rpc`/`mouse_rpc_legacy` 2.0, `chick_full` 1.5), so the
@@ -170,12 +230,24 @@ shared view is reproduced exactly. Identifying old links by version (not by a mi
 key) stays correct even if a future change makes the `smooth_sigma` write conditional.
 An out-of-range σ from a hand-edited URL is clamped to the slider's [0, 4] domain.
 
-**Restoration ownership** (each control is written by exactly one restore-capable
-callback, and each reads the same URL state):
+Added in v0.32 — schema **v4** adds `data_version` and `smoothing_mode`.
+Dataset ids are stable: replacing data requires a new id or the version notice.
+When retaining an id, use a new file basename so older links trigger the notice;
+do not replace data in place under the same basename.
+`data_version` is the configured file basename, resolved server-side. A mismatch
+still restores but displays: "This link was created with an earlier version of this
+dataset (<old>); it now shows <new>." Links without the field restore silently.
+Missing `smoothing_mode` uses historical zero-fill; pre-v3 links retain the legacy
+sigma migration above. Missing nasal-cap keys retain their historical defaults,
+and a missing camera uses the face-on default. These are defaults, never the
+recipient's previously selected settings.
+
+**Restoration ownership** (option-populating callbacks retain their owners; all
+value Outputs and restore values come from the schema):
 
 - `callbacks/url_callbacks.initialize_from_url` → dataset + global controls
   (mode, bins, percentile, enable_binning, enable_smoothing, bin_stat, plot_type,
-  compare_genes, gene2, compare_shared_scale, the uncaptured-nasal-cap controls
+  compare_genes, gene2, compare_shared_scale, smoothing_mode, ROI/volcano controls, the uncaptured-nasal-cap controls
   ng_layers/ng_frac/ng_dorsal/ng_ventral, and the sphere camera `sphere_cam`).
   Fires on initial load (`prevent_initial_call='initial_duplicate'`) so a pasted
   link works.
@@ -183,7 +255,9 @@ callback, and each reads the same URL state):
   by the restored dataset; the slider's sigma is resolved URL-value > legacy default
   > config default by `resolve_smooth_sigma`).
 - `main_callbacks.update_custom_embedding_controls` → custom_x / custom_y.
-- `main_callbacks.populate_group_controls` → all group controls.
+- `main_callbacks.populate_group_controls` → group options and values.
+- `main_callbacks.reset_wholemount_params` → dataset projection defaults (or the
+  matching URL values on dataset load); Reset always restores dataset defaults.
 
 Every URL-reading owner (`update_data`, `update_custom_embedding_controls`,
 `populate_group_controls`) applies the shared state **only when the URL's `dataset`

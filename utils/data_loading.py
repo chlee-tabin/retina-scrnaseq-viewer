@@ -23,26 +23,44 @@ def resolve_data_path(file_path):
     paths are honored as-is.
     """
     data_dir = os.getenv("DATA_DIR", "data")
-    p = str(file_path)
+    p = str(file_path).replace('\\', '/')
     if os.path.isabs(p):
         return p
-    parts = p.replace("\\", "/").split("/", 1)
+    parts = p.split("/", 1)
     if parts[0] == "data" and len(parts) > 1:
         p = parts[1]
     return os.path.join(data_dir, p)
 
 
-@lru_cache(maxsize=2)
+def load_dataset_config(config_path='datasets_config.yml'):
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    basenames = {}
+    for dataset_id, dataset in config['datasets'].items():
+        name = os.path.basename(dataset['file_path'].replace('\\', '/'))
+        if name in basenames:
+            raise ValueError(f"Duplicate dataset basename '{name}': {basenames[name]} and {dataset_id}")
+        basenames[name] = dataset_id
+    return config
+
+
+def _dataset_cache_size():
+    return max(1, sum(Path(ds['file_path']).suffix == '.h5ad'
+                      for ds in load_dataset_config()['datasets'].values()))
+
+
+# ponytail: fixed 2-entry bound (multi-GB objects, 16 GB container); switching between
+# >2 datasets reloads from disk. Memory-aware eviction if that cost ever matters.
+_ADATA_CACHE_SIZE = 2
+
+
+@lru_cache(maxsize=_ADATA_CACHE_SIZE)
 def _cached_load_adata(filename):
     # Provision the file on first access (no-op if already on disk or if
     # HF_DATA_REPO is unset). Lets the app start without blocking on downloads;
     # the dataset is fetched the moment it is actually selected.
-    try:
-        from utils.data_provision import ensure_one_dataset
-        ensure_one_dataset(filename)
-    except Exception as e:  # noqa: BLE001 - fall through to the read, which will error clearly
-        logger.error(f"On-demand provisioning failed for {filename}: {e}")
-    resolved = resolve_data_path(filename)
+    from utils.data_provision import ensure_one_dataset
+    resolved = ensure_one_dataset(filename)
     logger.info(f"Starting to load {resolved}")
     adata = ad.read_h5ad(resolved)
     logger.info(f"Successfully loaded {resolved} with {adata.n_obs} cells")
@@ -79,14 +97,10 @@ def load_adata(filename):
         return _cached_load_adata(filename)
 
 
-# Preserve the public cache introspection/invalidation API and maxsize=2 semantics.
+# Preserve the public cache introspection/invalidation API and per-file load lock.
 load_adata.cache_info = _cached_load_adata.cache_info
 load_adata.cache_parameters = _cached_load_adata.cache_parameters
 
-
-def load_dataset_config(config_path='datasets_config.yml'):
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
 
 def validate_datasets(config):
     """List the datasets the app should offer.
@@ -131,16 +145,28 @@ def choose_default_embedding(available_embeddings, obs_columns,
     return available_embeddings[0] if available_embeddings else 'custom_embedding'
 
 
-def gene_search_options(genes, search_value):
+def gene_search_options(genes, search_value, selected_values=None):
     """Fuzzy starts-with/contains gene search shared by the gene dropdowns.
 
     With a search string present, starts-with matches sort ahead of contains matches;
-    otherwise all genes are returned alphabetically. Returns Dash dropdown option dicts.
+    no search results are offered until a character is typed; at most 200 options are
+    returned.  A current selection is retained even before a search begins, because Dash
+    clears a Dropdown value that is absent from its options.
     Lives here (a leaf util both callback modules already import) so neither callback
     module has to import a private helper from the other.
     """
-    if search_value:
-        sv = search_value.lower()
+    if isinstance(selected_values, str):
+        selected_values = [selected_values]
+    elif not isinstance(selected_values, (list, tuple, set)):
+        selected_values = []
+    selected = []
+    for value in selected_values:
+        gene = match_gene(value, genes)
+        if gene and gene not in selected:
+            selected.append(gene)
+
+    if isinstance(search_value, str) and search_value.strip():
+        sv = search_value.strip().lower()
         starts_with = []
         contains = []
         for gene in genes:
@@ -150,8 +176,21 @@ def gene_search_options(genes, search_value):
             elif sv in gl:
                 contains.append(gene)
         matching = sorted(starts_with) + sorted(contains)
-        return [{'label': g, 'value': g} for g in matching]
-    return [{'label': g, 'value': g} for g in sorted(genes)]
+    else:
+        matching = []
+    # Put selected genes first so a selected gene survives the 200-option cap even
+    # when it does not match the current search text.
+    choices = selected + [gene for gene in matching if gene not in selected]
+    return [{'label': gene, 'value': gene} for gene in choices[:200]]
+
+
+def match_gene(gene, genes):
+    """Exact name first, then species-correct casing, before choosing a default."""
+    if not isinstance(gene, str):
+        return None
+    if gene in genes:
+        return gene
+    return next((g for g in genes if g.casefold() == gene.casefold()), None)
 
 def detect_cp_target(adata, n_sample=256):
     """Detect the counts-per-X normalisation target of a log1p-normalised ``.X``.
@@ -198,7 +237,7 @@ def dataset_column_types(filename):
     return obs_column_types(load_adata(filename).obs)
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=_dataset_cache_size())
 def dataset_norm_target(filename):
     """Server-derived normalisation, never a value from dcc.Store."""
     return detect_cp_target(load_adata(filename))
