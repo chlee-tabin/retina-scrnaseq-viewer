@@ -7,6 +7,12 @@ from utils.version import VIEWER_VERSION, viewer_revision
 # Viewer version (bump on each released change) + manuscript preprint link, shown at
 # the top of the sidebar.
 PREPRINT_URL = "https://doi.org/10.64898/2026.01.04.697548"
+SOURCE_URL = "https://github.com/chlee-tabin/retina-scrnaseq-viewer"
+ANALYSIS_URL = "https://github.com/chlee-tabin/retina-spatial-scrna-analysis"
+
+
+def _link(text, href):
+    return html.A(text, href=href, target="_blank", rel="noopener noreferrer")
 
 def create_sidebar():
     return html.Div([
@@ -34,5 +40,9 @@ def create_sidebar():
                 create_control_panel()
             ], title="Visualization Control", item_id="viz-section"),
         ], start_collapsed=False, always_open=True, active_item=["dataset-section", "viz-section"]),
-        html.Footer(f"viewer {VIEWER_VERSION} · {viewer_revision()}", className='small text-muted mt-3'),
+        html.Footer([
+            f"viewer {VIEWER_VERSION} · {viewer_revision()} · ",
+            _link("Source code (MIT license)", SOURCE_URL), " · ",
+            _link("Analysis code", ANALYSIS_URL),
+        ], className='small text-muted mt-3'),
     ], className="p-3")

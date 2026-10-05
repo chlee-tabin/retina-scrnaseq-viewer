@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this viewer, please cite it as below, together with the accompanying manuscript and the original GEO accessions listed in the README."
 title: "Retina scRNA-seq Pattern Viewer"
 type: software
-version: "0.32"
+version: "0.33"
 date-released: "2026-10-04"
 authors:
   - family-names: Lee

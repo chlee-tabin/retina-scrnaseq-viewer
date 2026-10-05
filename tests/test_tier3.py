@@ -567,3 +567,10 @@ if __name__ == '__main__':
                 test()
                 print(f'OK: {name}')
     print('All Tier 3 checks passed.')
+
+
+def test_footer_links_source_license_and_analysis_repo():
+    from layouts.sidebar import create_sidebar, SOURCE_URL, ANALYSIS_URL
+    footer = next(c for c in create_sidebar().children if type(c).__name__ == 'Footer')
+    hrefs = {getattr(c, 'href', None) for c in footer.children}
+    assert {SOURCE_URL, ANALYSIS_URL} <= hrefs

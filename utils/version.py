@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-VIEWER_VERSION = '0.32'
+VIEWER_VERSION = '0.33'
 
 
 def viewer_revision():
