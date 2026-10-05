@@ -49,7 +49,12 @@ def _dataset_cache_size():
                       for ds in load_dataset_config()['datasets'].values()))
 
 
-@lru_cache(maxsize=_dataset_cache_size())
+# ponytail: fixed 2-entry bound (multi-GB objects, 16 GB container); switching between
+# >2 datasets reloads from disk. Memory-aware eviction if that cost ever matters.
+_ADATA_CACHE_SIZE = 2
+
+
+@lru_cache(maxsize=_ADATA_CACHE_SIZE)
 def _cached_load_adata(filename):
     # Provision the file on first access (no-op if already on disk or if
     # HF_DATA_REPO is unset). Lets the app start without blocking on downloads;

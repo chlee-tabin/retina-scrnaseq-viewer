@@ -333,14 +333,14 @@ def test_load_single_flight_and_identity():
             release.set()
         assert all(f.result(timeout=5) is fake for f in jobs)
         assert reader.call_count == provision.call_count == 1
-        assert data_loading.load_adata.cache_info().maxsize >= len(paths)
+        assert data_loading.load_adata.cache_info().maxsize == 2
         refuses(lambda: data_loading.load_adata('/secret/unconfigured.h5ad'))
         assert reader.call_count == 1
         assert data_loading.load_dataset_state({'dataset_id': 'unknown', 'filename': paths[0]}) == (None, {})
         for path in paths[1:]:
             data_loading.load_adata(path)
-        data_loading.load_adata(paths[0])  # All selectable datasets fit in the cache.
-        assert reader.call_count == 3 and data_loading.load_adata.cache_info().currsize == 3
+        data_loading.load_adata(paths[0])  # Evicted by the 2-entry bound: reloaded.
+        assert reader.call_count == 4 and data_loading.load_adata.cache_info().currsize == 2
     data_loading.load_adata.cache_clear()
     with patch.object(data_loading, 'load_dataset_config', return_value=cfg), \
          patch.object(data_provision.os.path, 'exists') as exists:

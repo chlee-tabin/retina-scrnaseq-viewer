@@ -430,8 +430,7 @@ def test_shared_categorical_helper_and_replicate_fallback():
 
 
 def test_selectable_dataset_cache_size_and_unified_floor():
-    selectable = loading.validate_datasets(loading.load_dataset_config())
-    assert loading.load_adata.cache_info().maxsize == len(selectable)
+    assert loading.load_adata.cache_info().maxsize == 2  # bounded: multi-GB objects
     assert DEFAULT_MIN_CELLS_PER_BIN == 5
     assert inspect.signature(plotting._binned_mean).parameters['min_cells'].default == DEFAULT_MIN_CELLS_PER_BIN
     assert loading.get_dataset_config('chick_full')['smooth_sigma'] == 1.5
