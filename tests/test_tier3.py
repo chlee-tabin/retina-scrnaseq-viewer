@@ -559,6 +559,13 @@ def test_gene_vector_never_builds_a_view_that_copies_raw():
     assert np.array_equal(main._gene_vector(dense, 'B'), np.array([1., 3., 5.]))
 
 
+def test_footer_links_source_license_and_analysis_repo():
+    from layouts.sidebar import create_sidebar, SOURCE_URL, ANALYSIS_URL
+    footer = next(c for c in create_sidebar().children if type(c).__name__ == 'Footer')
+    hrefs = {getattr(c, 'href', None) for c in footer.children}
+    assert {SOURCE_URL, ANALYSIS_URL} <= hrefs
+
+
 if __name__ == '__main__':
     with tempfile.TemporaryDirectory(prefix='tier3-cache-', dir=ROOT) as cache, \
          patch.dict(os.environ, {'MPLCONFIGDIR': cache, 'HF_DATA_REPO': ''}):
@@ -567,3 +574,4 @@ if __name__ == '__main__':
                 test()
                 print(f'OK: {name}')
     print('All Tier 3 checks passed.')
+
