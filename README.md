@@ -10,6 +10,8 @@ pinned: false
 
 # Retina scRNA-seq Pattern Viewer
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23282649.svg)](https://doi.org/10.5281/zenodo.23282649)
+
 An interactive [Plotly Dash](https://dash.plotly.com/) application for exploring
 single-cell RNA-seq data with spatial/topographic structure from the developing
 retina. It accompanies a manuscript on topographic gene expression in the early
