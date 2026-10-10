@@ -8,6 +8,10 @@ authors:
   - family-names: Lee
     given-names: ChangHee
 license: MIT
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.23282649"
+    description: "Zenodo archive, all versions"
 repository-code: "https://github.com/chlee-tabin/retina-scrnaseq-viewer"
 url: "https://huggingface.co/spaces/chlee-tabin/retina-scrnaseq-viewer"
 preferred-citation:
